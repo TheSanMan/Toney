@@ -25,3 +25,18 @@ Agent results and failures carry trace IDs and stage events. Error messages show
 ## Review discipline
 
 Clearly distinguish working capabilities, experimental approximations, and future work. Keep schema changes versioned. Manual controls own authoritative rig values. Preserve audio-engine isolation when adding inference. Update architecture decisions when a boundary changes.
+
+## Desktop checks
+
+```sh
+npm run native:build
+npm run desktop:check
+npm run check
+npm run desktop:build
+```
+
+CMake may be selected with `CMAKE`; an existing JUCE 8.0.14 checkout with `JUCE_PATH`. The native README documents the SDK headers workaround observed on the development machine. Build outputs, fetched dependencies, target-specific helper binaries, and generated Tauri files are ignored.
+
+The macOS CI job builds the real helper before testing language/catalog agreement and building the desktop bundle. Device counts are not CI assertions: headless systems may have no devices. Tests never open audio streams. Hosted CI execution remains unverified until pushed.
+
+For interactive acceptance, open the bundled app, generate/refine a rig, refresh devices, validate it, then change a control and check the stale-validation notice. Export and re-import a preset using the native dialog, render/play/export a WAV, and try local Ollama with Vite stopped. Confirm failures preserve the rig and appear in Diagnostics. Record any unverified checks explicitly; a successful bundle build does not prove GUI behavior.

@@ -14,7 +14,7 @@ User intent → ToneIntent → deterministic tone compiler → ToneSpec → audi
 
 `ToneSpec` is the authoritative rig shared by the agent, controls, history, persistence, and audio processing. Manual edits become the input to subsequent agent requests.
 
-## First checkpoint: an interactive tone agent
+## Working checkpoint: desktop control foundation
 
 This repository begins with a small, runnable vertical slice, following the requested agent-first development order:
 
@@ -24,7 +24,7 @@ This repository begins with a small, runnable vertical slice, following the requ
 - An offline browser audio preview makes the result audible using a synthetic plucked-string phrase or an imported clean DI file.
 - Local version history, preset export/import, and request traces support iteration and diagnosis.
 
-The browser workbench is a development harness for the future desktop app. Its effects and synthetic source are audition tools; they are not a production native amp simulator, neural amp model, cabinet IR, or low-latency guitar input. Realtime device handling, Tauri packaging, and the native engine are subsequent checkpoints.
+A Tauri macOS desktop app now packages the same workbench with a JUCE helper for real audio device discovery and independent rig validation. Preset, WAV, and diagnostic exports use native save dialogs. Its audio audition still uses Web Audio; native DSP, NAM, cabinet IRs, and realtime guitar input are subsequent checkpoints.
 
 ## Development
 
@@ -38,7 +38,7 @@ npm run dev
 
 Open [the local workbench](http://127.0.0.1:5173). The server binds only to this machine. Use `npm run check` to run lint, typecheck, tests, and the production build. `npm run test:watch` runs tests while editing.
 
-### Try the first checkpoint
+### Try the tone agent
 
 1. Pick **Dark grunge** and click **Dial in my tone**.
 2. Click **Hear this rig**. If your browser blocks automatic playback, press the audio player's play button. Compare with **Dry source**.
@@ -56,15 +56,34 @@ The default **Offline tone rules** provider is deterministic domain logic, not a
 
 To use an installed Ollama model, start Ollama, select **Local model · Ollama**, and enter its installed model name. The development server proxies requests only to `127.0.0.1:11434`. No weights are downloaded automatically. `llama3:latest` was successfully tested on the development machine; model output is schema-validated and failures do not replace the current rig. There is a 45-second inference timeout.
 
-The Ollama proxy is part of `npm run dev`; a static build or `npm run preview` provides the offline rules workbench only. Production desktop inference and packaging remain a later checkpoint.
+The browser Ollama proxy is part of `npm run dev`; a static build or `npm run preview` provides the offline rules workbench only. The desktop app connects through Rust directly to the same fixed local endpoint, with bounded requests/responses and no redirects. This native transport is implemented and contract-tested; integrated desktop inference still needs interactive verification.
+
+### Run the desktop app
+
+Build requirements: macOS, Node.js 22+, Rust 1.90+, CMake 3.22+, and Xcode Command Line Tools. The native helper fetches the pinned official JUCE 8.0.14 source on its first build.
+
+```sh
+npm run desktop:dev
+# Or build a development .app with its frontend and helper bundled:
+npm run desktop:build
+```
+
+The app is created at `apps/desktop/src-tauri/target/debug/bundle/macos/Toney.app`. It is a local development bundle; signing, notarization, and distribution are later work. `npm run desktop:check` runs Rust formatting, tests, and Clippy. `npm run native:build` runs C++ contract tests and stages the helper; `npm run check` then also tests TypeScript/native catalog agreement. Those integration tests explicitly skip when the helper has not been built.
+
+For a CMake executable outside PATH, set `CMAKE=/absolute/path/to/cmake`. See [native build instructions](engine/audio/README.md) for the tested macOS SDK header workaround and an optional existing JUCE checkout.
+
+In **Audio devices**, refresh devices and validate the current rig. Device scanning does not open microphone or output streams. Validation confirms schema/catalog acceptance; it does not install a running DSP graph. Adjusting the rig marks the previous validation as outdated. Diagnostics include operation IDs, timings, and error codes.
+
+Checkpoint 003 has passed build and automated checks, including real device enumeration. Desktop GUI, native save-dialog delivery, WKWebView playback, and packaged Ollama interaction require user review because Computer Use permissions were unavailable during verification.
 
 ## Checkpoints
 
 1. **Repository foundation:** README, architecture, development workflow, and checkpoint criteria.
 2. **Tone agent workbench:** intent → rig → audible preview, manual edits, contextual refinement, validation, tests, and traces.
-3. **Native audio foundation:** desktop shell, audio device enumeration, native offline DSP, DI workflow, and parity against the preview contract.
-4. **Local inference and audio quality:** evaluate models, NAM and cabinet IR support, reliable generation and refinement.
-5. **Realtime playing:** audio interface input, smoothing, meters, and device lifecycle testing.
+3. **Desktop control foundation:** Tauri bundle, audio device enumeration, native rig validation, native saves, and local inference transport.
+4. **Native offline audio:** render a DI through native DSP, validate WAV output, and compare against the preview contract.
+5. **Local inference and audio quality:** evaluate models, NAM and cabinet IR support, reliable generation and refinement.
+6. **Realtime playing:** audio interface input, smoothing, meters, and device lifecycle testing.
 
 Later work adds audio analysis, candidate search, reference matching, preferences, plugin hosting, and optional research. Each checkpoint must remain runnable and be committed before review. See [architecture](docs/architecture.md), [development workflow](docs/development.md), and [checkpoint log](docs/checkpoints.md).
 
@@ -72,4 +91,4 @@ Later work adds audio analysis, candidate search, reference matching, preference
 
 Core generation and audio preview run locally. Optional model inference must use an explicitly selected local provider. Audio recordings are not uploaded. Diagnostic exports include prompts and rigs, so keep them private as appropriate. Network research is a later, opt-in capability.
 
-The original [product proposal](docs/product-proposal.md) is preserved for reference. The current checkpoint follows the direct request to start with the agent; native audio phases are still outstanding.
+The original [product proposal](docs/product-proposal.md) is preserved for reference. The current checkpoint follows the direct request to start with the agent; native audio processing phases are still outstanding.
