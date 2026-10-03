@@ -1,5 +1,15 @@
 # Native engine control helper
 
+## Asset schema and cabinet IRs
+
+Schema 1 retains built-in rigs. Schema 2 adds optional node `asset:{id,kind,name}` references, where `id` is the lowercase SHA-256 of the file bytes. `cab_ir` on a cabinet requires `kind:"ir"`; `nam` on an amp requires `kind:"nam"`. Built-in models forbid asset fields. Bypassed asset nodes need no staged file; every enabled reference must resolve to a supplied, hash-verified file. Missing or corrupt assets fail without a substitute sound.
+
+`inspect_asset` accepts an internal `asset:{id,kind,path}` and reports `{kind:"asset-info",id,assetKind,sampleRate,channels,frames}` for an IR. `render_audio` accepts optional `render.assets:[{id,kind,path}]`; these absolute paths are supplied by the Rust asset library, never by frontend requests. Duplicate, unreferenced, mismatched, missing, and corrupt entries are rejected.
+
+IR inputs must be audible finite mono/stereo WAV, 8000–96000 Hz, at most two seconds and 8 MiB. Rendering uses actual zero-latency JUCE convolution without trimming or loudness normalization. Centered windowed-sinc conversion aligns an IR to the recording sample rate; kernel-density gain compensation preserves convolution gain across sample rates. A mono IR processes both source channels independently. A stereo IR uses corresponding source channels; for a mono recording its two kernels are averaged, preserving the recording's channel count. Cabinet brightness and resonance remain external tone filters. The IR's frame duration contributes to the capped render tail.
+
+Asset errors use `ASSET_INVALID`, `ASSET_UNSUPPORTED`, `ASSET_MISSING`, and `ASSET_CORRUPT` with actionable sanitized messages.
+
 The JUCE 8.0.14 C++17 helper provides real device enumeration, independent ToneSpec validation, and deterministic offline WAV rendering through all eight built-in effects. Device queries scan names/defaults without opening input or output streams. Rendering processes a file without audio hardware; these approximate effects do not implement NAM models, measured cabinet IRs, or realtime guitar input.
 
 ## Build and test

@@ -14,16 +14,24 @@ export type IntentPath =
   | `dynamics.${keyof ToneIntent['dynamics']}`
   | `space.${keyof ToneIntent['space']}`;
 
+export interface AssetRef {
+  /** SHA-256 of the locally imported asset bytes, never a filesystem path. */
+  id: string;
+  kind: 'ir' | 'nam';
+  name: string;
+}
+
 export interface ToneNode {
   id: string;
   type: NodeType;
   model: string;
   enabled: boolean;
   parameters: Record<string, number>;
+  asset?: AssetRef;
 }
 
 export interface ToneSpec {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   name: string;
   revision: number;

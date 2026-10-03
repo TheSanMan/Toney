@@ -103,11 +103,11 @@ private:
 };
 }
 
-DecodedWave readWave(const juce::File& file)
+DecodedWave readWave(const juce::File& file, juce::int64 maxBytes, double maxSeconds)
 {
     if (!file.existsAsFile()) throw ControlError("AUDIO_INPUT_INVALID", "Input recording is missing or unreadable.");
     const auto bytes = file.getSize();
-    if (bytes > maxWaveBytes) throw ControlError("AUDIO_INPUT_TOO_LARGE", "Input WAV exceeds the 32 MiB limit.");
+    if (bytes > maxBytes) throw ControlError("AUDIO_INPUT_TOO_LARGE", "Input WAV exceeds the file size limit.");
     if (bytes < 44) invalidWave();
     auto input = std::make_unique<juce::FileInputStream>(file);
     if (input->failedToOpen()) invalidWave();
@@ -117,8 +117,8 @@ DecodedWave readWave(const juce::File& file)
     if (!reader || reader->numChannels < 1 || reader->numChannels > 2 || !std::isfinite(reader->sampleRate)
         || reader->sampleRate != std::floor(reader->sampleRate) || reader->sampleRate < 8000 || reader->sampleRate > 96000
         || reader->lengthInSamples < 1) invalidWave();
-    if (reader->lengthInSamples > reader->sampleRate * 90)
-        throw ControlError("AUDIO_INPUT_TOO_LARGE", "Input recording exceeds the 90 second limit.");
+    if (reader->lengthInSamples > reader->sampleRate * maxSeconds)
+        throw ControlError("AUDIO_INPUT_TOO_LARGE", "Input recording exceeds the duration limit.");
     DecodedWave decoded {juce::AudioBuffer<float>(static_cast<int>(reader->numChannels), static_cast<int>(reader->lengthInSamples)), static_cast<int>(reader->sampleRate)};
     if (!reader->read(&decoded.samples, 0, decoded.samples.getNumSamples(), 0, true, true)) invalidWave();
     double peak = 0;

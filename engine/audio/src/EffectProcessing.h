@@ -4,7 +4,8 @@
 
 namespace toney
 {
+class AssetLibrary;
 // Deterministic approximate offline DSP. This has no audio-device callback.
-double renderTailSeconds(const juce::var& validatedTone);
-void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const juce::var& validatedTone);
+double renderTailSeconds(const juce::var& validatedTone, const AssetLibrary* assets = nullptr);
+void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const juce::var& validatedTone, const AssetLibrary* assets = nullptr);
 }

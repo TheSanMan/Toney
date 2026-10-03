@@ -1,6 +1,6 @@
 import { EFFECT_CATALOG } from './catalog';
-import type { NodeType, ToneNode, ToneSpec } from './types';
-import { number, ToneValidationError, validateToneSpec } from './validation';
+import type { AssetRef, NodeType, ToneNode, ToneSpec } from './types';
+import { number, ToneValidationError, validateAssetRef, validateToneSpec } from './validation';
 
 export const newId = (prefix: string): string => `${prefix}_${crypto.randomUUID()}`;
 export const cloneTone = (tone: ToneSpec): ToneSpec => validateToneSpec(tone);
@@ -12,7 +12,7 @@ export function createNode(type: NodeType): ToneNode {
 
 export function createInitialTone(): ToneSpec {
   const now = new Date().toISOString();
-  return { schemaVersion: 1, id: newId('tone'), name: 'Starting rig', revision: 0, chain: (Object.keys(EFFECT_CATALOG) as NodeType[]).map(createNode), metadata: { createdAt: now, updatedAt: now, source: 'initial' } };
+  return { schemaVersion: 2, id: newId('tone'), name: 'Starting rig', revision: 0, chain: (Object.keys(EFFECT_CATALOG) as NodeType[]).map(createNode), metadata: { createdAt: now, updatedAt: now, source: 'initial' } };
 }
 
 export function revised(tone: ToneSpec, source: string): ToneSpec {
@@ -40,4 +40,32 @@ export function setNodeEnabled(input: ToneSpec, nodeId: string, enabled: boolean
   if (typeof enabled !== 'boolean') throw new ToneValidationError('enabled', 'expected a boolean');
   node.enabled = enabled;
   return revised(tone, 'manual');
+}
+
+/** The local library resolves bytes independently; a ToneSpec stores portable references only. */
+export function setToneAsset(input: ToneSpec, nodeId: string, inputAsset: AssetRef | undefined): ToneSpec {
+  const tone = cloneTone(input);
+  const node = tone.chain.find((entry) => entry.id === nodeId);
+  if (!node) throw new ToneValidationError('nodeId', `unknown node ${nodeId}`);
+  if (node.type !== 'amp' && node.type !== 'cab') throw new ToneValidationError('nodeId', 'only amp and cab nodes support external assets');
+  if (inputAsset === undefined) {
+    delete node.asset;
+    node.model = EFFECT_CATALOG[node.type].model;
+  } else {
+    const asset = validateAssetRef(inputAsset);
+    if (asset.kind !== (node.type === 'amp' ? 'nam' : 'ir')) throw new ToneValidationError('asset.kind', `${node.type} requires ${node.type === 'amp' ? 'a NAM' : 'an IR'} asset`);
+    node.asset = asset;
+    node.model = node.type === 'amp' ? 'nam' : 'cab_ir';
+  }
+  return revised(tone, 'manual');
+}
+
+/** Disabled assets need not exist locally to render the rest of the rig. */
+export function collectToneAssets(input: ToneSpec): AssetRef[] {
+  const tone = validateToneSpec(input);
+  const assets = new Map<string, AssetRef>();
+  for (const node of tone.chain) {
+    if (node.enabled && node.asset) assets.set(`${node.asset.kind}:${node.asset.id}`, node.asset);
+  }
+  return [...assets.values()];
 }

@@ -1,5 +1,6 @@
 #include "EffectProcessing.h"
 #include "Protocol.h"
+#include "Assets.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
 #include <array>
@@ -165,13 +166,19 @@ void room(juce::AudioBuffer<float>& samples, double sampleRate, const juce::var&
 }
 }
 
-double renderTailSeconds(const juce::var& tone)
+double renderTailSeconds(const juce::var& tone, const AssetLibrary* assets)
 {
     double tail = 0;
     for (const auto& node : *tone["chain"].getArray())
     {
         if (!static_cast<bool>(node["enabled"])) continue;
         const auto type = node["type"].toString();
+        if (node["model"].toString() == "cab_ir")
+        {
+            if (assets == nullptr) throw ControlError("ASSET_MISSING", "Cabinet IR is unavailable.");
+            const auto& impulse = *assets->get(node["asset"]["id"].toString()).impulse;
+            tail += (impulse.samples.getNumSamples() - 1.0) / impulse.sampleRate;
+        }
         if (type == "delay" && parameter(node, "mix") > 0)
         {
             const auto feedback = parameter(node, "feedback");
@@ -185,13 +192,21 @@ double renderTailSeconds(const juce::var& tone)
     return std::min(12.0, tail);
 }
 
-void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const juce::var& tone)
+void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const juce::var& tone, const AssetLibrary* assets)
 {
     for (const auto& node : *tone["chain"].getArray())
     {
         if (!static_cast<bool>(node["enabled"])) continue;
         const auto type = node["type"].toString();
-        if (type == "compressor") compress(samples, sampleRate, node);
+        if (node["model"].toString() == "cab_ir")
+        {
+            if (assets == nullptr) throw ControlError("ASSET_MISSING", "Cabinet IR is unavailable.");
+            convolveImpulse(samples, sampleRate, assets->get(node["asset"]["id"].toString()));
+            filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(145, sampleRate), 1.1f, juce::Decibels::decibelsToGain(static_cast<float>(parameter(node, "resonance") * 5))));
+            filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(3200, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "brightness") - 0.5) * 12))));
+        }
+        else if (node["model"].toString() == "nam") throw ControlError("ASSET_UNSUPPORTED", "Neural processing is unavailable in this milestone.");
+        else if (type == "compressor") compress(samples, sampleRate, node);
         else if (type == "drive")
         {
             const auto gain = parameter(node, "gain");

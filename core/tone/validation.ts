@@ -1,5 +1,5 @@
 import { EFFECT_CATALOG } from './catalog';
-import type { NodeType, ToneIntent, ToneSpec } from './types';
+import type { AssetRef, NodeType, ToneIntent, ToneSpec } from './types';
 
 export class ToneValidationError extends Error {
   readonly code = 'INVALID_TONE_SPEC';
@@ -37,10 +37,21 @@ function timestamp(input: unknown, path: string): string {
   return value;
 }
 
+export function validateAssetRef(input: unknown, path = 'asset'): AssetRef {
+  const value = object(input, path);
+  keys(value, ['id', 'kind', 'name'], path);
+  if (typeof value.id !== 'string' || !/^[0-9a-f]{64}$/.test(value.id)) throw new ToneValidationError(`${path}.id`, 'expected a 64-character lowercase SHA-256');
+  if (value.kind !== 'ir' && value.kind !== 'nam') throw new ToneValidationError(`${path}.kind`, 'expected ir or nam');
+  const name = text(value.name, `${path}.name`);
+  const hasControls = [...name].some((character) => { const code = character.charCodeAt(0); return code < 32 || (code >= 127 && code <= 159); });
+  if (name.length > 200 || name === '.' || name.includes('..') || /[/\\:]/.test(name) || hasControls) throw new ToneValidationError(`${path}.name`, 'expected a basename of 1 to 200 characters without path syntax or control characters');
+  return { id: value.id, kind: value.kind, name };
+}
+
 export function validateToneSpec(input: unknown): ToneSpec {
   const value = object(input, 'tone');
   keys(value, ['schemaVersion', 'id', 'name', 'revision', 'chain', 'metadata'], 'tone');
-  if (value.schemaVersion !== 1) throw new ToneValidationError('tone.schemaVersion', 'only schema version 1 is supported');
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2) throw new ToneValidationError('tone.schemaVersion', 'only schema versions 1 and 2 are supported');
   const revision = number(value.revision, 'tone.revision', 0, Number.MAX_SAFE_INTEGER);
   if (!Number.isInteger(revision)) throw new ToneValidationError('tone.revision', 'expected an integer');
   if (!Array.isArray(value.chain) || value.chain.length < 1 || value.chain.length > 32) throw new ToneValidationError('tone.chain', 'expected between 1 and 32 nodes');
@@ -48,7 +59,7 @@ export function validateToneSpec(input: unknown): ToneSpec {
   const chain = value.chain.map((inputNode: unknown, index: number) => {
     const path = `tone.chain[${index}]`;
     const node = object(inputNode, path);
-    keys(node, ['id', 'type', 'model', 'enabled', 'parameters'], path);
+    keys(node, ['id', 'type', 'model', 'enabled', 'parameters'], path, value.schemaVersion === 2 ? ['asset'] : []);
     const id = text(node.id, `${path}.id`);
     if (ids.has(id)) throw new ToneValidationError(`${path}.id`, 'duplicate node ID');
     ids.add(id);
@@ -56,17 +67,27 @@ export function validateToneSpec(input: unknown): ToneSpec {
     if (!Object.hasOwn(EFFECT_CATALOG, typeName)) throw new ToneValidationError(`${path}.type`, 'unsupported effect type');
     const type = typeName as NodeType;
     const definition = EFFECT_CATALOG[type];
-    if (node.model !== definition.model) throw new ToneValidationError(`${path}.model`, `supported model is ${definition.model}`);
+    const model = text(node.model, `${path}.model`);
+    const externalKind = type === 'cab' && model === 'cab_ir' ? 'ir' : type === 'amp' && model === 'nam' ? 'nam' : undefined;
+    let asset: AssetRef | undefined;
+    if (model === definition.model) {
+      if (Object.hasOwn(node, 'asset')) throw new ToneValidationError(`${path}.asset`, 'builtin models cannot reference external assets');
+    } else if (externalKind && value.schemaVersion === 2) {
+      asset = validateAssetRef(node.asset, `${path}.asset`);
+      if (asset.kind !== externalKind) throw new ToneValidationError(`${path}.asset.kind`, `${model} requires a ${externalKind} asset`);
+    } else {
+      throw new ToneValidationError(`${path}.model`, `unsupported model ${model} for ${type} in schema version ${value.schemaVersion}`);
+    }
     if (typeof node.enabled !== 'boolean') throw new ToneValidationError(`${path}.enabled`, 'expected a boolean');
     const params = object(node.parameters, `${path}.parameters`);
     keys(params, Object.keys(definition.parameters), `${path}.parameters`);
     const parameters = Object.fromEntries(Object.entries(definition.parameters).map(([key, parameter]) => [key, number(params[key], `${path}.parameters.${key}`, parameter.min, parameter.max)]));
-    return { id, type, model: definition.model, enabled: node.enabled, parameters };
+    return { id, type, model, enabled: node.enabled, parameters, ...(asset ? { asset } : {}) };
   });
   const metadata = object(value.metadata, 'tone.metadata');
   keys(metadata, ['createdAt', 'updatedAt', 'source'], 'tone.metadata', ['traceId']);
   return {
-    schemaVersion: 1, id: text(value.id, 'tone.id'), name: text(value.name, 'tone.name'), revision, chain,
+    schemaVersion: 2, id: text(value.id, 'tone.id'), name: text(value.name, 'tone.name'), revision, chain,
     metadata: { createdAt: timestamp(metadata.createdAt, 'tone.metadata.createdAt'), updatedAt: timestamp(metadata.updatedAt, 'tone.metadata.updatedAt'), source: text(metadata.source, 'tone.metadata.source'), ...(metadata.traceId !== undefined ? { traceId: text(metadata.traceId, 'tone.metadata.traceId') } : {}) },
   };
 }

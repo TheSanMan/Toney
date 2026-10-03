@@ -50,7 +50,7 @@ juce::var handleRequest(const juce::String& json)
             || static_cast<double>(version) != protocolVersion)
             throw ControlError("UNSUPPORTED_PROTOCOL", "Only protocol version 1 is supported.");
 
-        const std::set<juce::String> allowed {"protocolVersion", "requestId", "command", "tone", "render"};
+        const std::set<juce::String> allowed {"protocolVersion", "requestId", "command", "tone", "render", "asset"};
         for (const auto& property : request.getDynamicObject()->getProperties())
             if (allowed.count(property.name.toString()) == 0)
                 throw ControlError("INVALID_REQUEST", "Request contains an unknown field.");
@@ -58,6 +58,10 @@ juce::var handleRequest(const juce::String& json)
         if (!request["command"].isString())
             throw ControlError("INVALID_REQUEST", "command must be a string.");
         const auto command = request["command"].toString();
+        if (command != "inspect_asset" && request.getDynamicObject()->hasProperty("asset"))
+            throw ControlError("INVALID_REQUEST", "asset is only accepted by inspect_asset.");
+        if (command == "inspect_asset" && (request.getDynamicObject()->hasProperty("tone") || request.getDynamicObject()->hasProperty("render")))
+            throw ControlError("INVALID_REQUEST", "Asset inspection forbids tone and render fields.");
         if ((command == "get_engine_info" || command == "get_audio_devices")
             && request.getDynamicObject()->hasProperty("tone"))
             throw ControlError("INVALID_REQUEST", "tone is only accepted by tone validation and audio rendering.");
@@ -65,15 +69,17 @@ juce::var handleRequest(const juce::String& json)
             throw ControlError("INVALID_REQUEST", "render is only accepted by render_audio.");
         juce::var result;
         if (command == "get_engine_info")
-            result = makeObject({{"kind", "engine-info"}, {"engineVersion", "0.3.0"},
+            result = makeObject({{"kind", "engine-info"}, {"engineVersion", "0.4.0"},
                                  {"backend", "JUCE"},
-                                 {"capabilities", juce::Array<juce::var>{"device-enumeration", "rig-validation", "offline-render"}}});
+                                 {"capabilities", juce::Array<juce::var>{"device-enumeration", "rig-validation", "offline-render", "cabinet-ir"}}});
         else if (command == "get_audio_devices")
             result = enumerateDevices();
         else if (command == "validate_tone_spec")
             result = validateTone(request["tone"]);
         else if (command == "render_audio")
             result = renderAudio(request["tone"], request["render"]);
+        else if (command == "inspect_asset")
+            result = inspectAsset(request["asset"]);
         else
             throw ControlError("UNKNOWN_COMMAND", "Unsupported engine command.");
 

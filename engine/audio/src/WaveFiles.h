@@ -6,6 +6,6 @@ namespace toney
 {
 constexpr juce::int64 maxWaveBytes = 32 * 1024 * 1024;
 struct DecodedWave { juce::AudioBuffer<float> samples; int sampleRate; };
-DecodedWave readWave(const juce::File& input);
+DecodedWave readWave(const juce::File& input, juce::int64 maxBytes = maxWaveBytes, double maxSeconds = 90);
 void writeWaveExclusive(const juce::File& output, const juce::AudioBuffer<float>& samples, int sampleRate);
 }

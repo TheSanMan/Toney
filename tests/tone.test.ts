@@ -10,7 +10,7 @@ describe('canonical tone contract', () => {
 
   it('rejects unsupported versions, models, unknown fields and invalid ranges', () => {
     const tone = createInitialTone();
-    expect(() => validateToneSpec({ ...tone, schemaVersion: 2 })).toThrow('schemaVersion');
+    expect(() => validateToneSpec({ ...tone, schemaVersion: 3 })).toThrow('schemaVersion');
     const drive = tone.chain.find((node) => node.type === 'drive');
     if (!drive) throw new Error('Missing drive');
     expect(() => validateToneSpec({ ...tone, chain: [{ ...drive, model: 'imaginary_amp' }] })).toThrow('model');

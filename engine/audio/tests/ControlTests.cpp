@@ -68,8 +68,8 @@ int main()
     const auto info = run(request("get_engine_info"));
     expect(static_cast<bool>(info["ok"]), "engine info succeeds");
     expect(info["result"]["backend"].toString() == "JUCE", "native backend disclosed");
-    expect(info["result"]["engineVersion"].toString() == "0.3.0", "engine version");
-    expect(info["result"]["capabilities"].getArray()->size() == 3, "only implemented capabilities advertised");
+    expect(info["result"]["engineVersion"].toString() == "0.4.0", "engine version");
+    expect(info["result"]["capabilities"].getArray()->size() == 4, "only implemented capabilities advertised");
 
     const auto valid = run(request("validate_tone_spec", fixture()));
     expect(static_cast<bool>(valid["ok"]), "full catalog fixture accepted");
@@ -78,7 +78,7 @@ int main()
     expect(static_cast<int>(valid["result"]["activeNodeCount"]) == 6, "bypass state counted");
     expect(static_cast<int>(valid["result"]["revision"]) == 7, "revision echoed");
 
-    rejects("unsupported schema", [](auto& tone) { tone.getDynamicObject()->setProperty("schemaVersion", 2); });
+    rejects("unsupported schema", [](auto& tone) { tone.getDynamicObject()->setProperty("schemaVersion", 3); });
     rejects("boolean schema rejected", [](auto& tone) { tone.getDynamicObject()->setProperty("schemaVersion", true); });
     rejects("fractional revision", [](auto& tone) { tone.getDynamicObject()->setProperty("revision", 1.5); });
     rejects("unsafe revision", [](auto& tone) { tone.getDynamicObject()->setProperty("revision", 9007199254740992.0); });

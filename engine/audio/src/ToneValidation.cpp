@@ -100,8 +100,8 @@ void timestamp(const juce::var& value, const juce::String& path)
 juce::var validateTone(const juce::var& tone)
 {
     keys(tone, {"schemaVersion", "id", "name", "revision", "chain", "metadata"}, "tone");
-    if (number(tone["schemaVersion"], "tone.schemaVersion", 1, 1) != 1)
-        invalid("tone.schemaVersion", "only schema version 1 is supported");
+    const auto schema = number(tone["schemaVersion"], "tone.schemaVersion", 1, 2);
+    if (schema != 1 && schema != 2) invalid("tone.schemaVersion", "only schema versions 1 and 2 are supported");
     const auto toneId = text(tone["id"], "tone.id");
     text(tone["name"], "tone.name");
     const auto revision = number(tone["revision"], "tone.revision", 0, 9007199254740991.0);
@@ -117,7 +117,7 @@ juce::var validateTone(const juce::var& tone)
     {
         const auto& node = (*chain)[index];
         const auto path = "tone.chain[" + juce::String(index) + "]";
-        keys(node, {"id", "type", "model", "enabled", "parameters"}, path);
+        keys(node, {"id", "type", "model", "enabled", "parameters"}, path, schema == 2 ? std::set<juce::String>{"asset"} : std::set<juce::String>{});
         if (!ids.insert(text(node["id"], path + ".id")).second)
             invalid(path + ".id", "duplicate node ID");
         const auto type = text(node["type"], path + ".type");
@@ -125,8 +125,21 @@ juce::var validateTone(const juce::var& tone)
         if (found == catalog.end())
             invalid(path + ".type", "unsupported effect type");
         const auto& definition = found->second;
-        if (!node["model"].isString() || node["model"].toString() != definition.model)
+        const auto model = node["model"].toString();
+        const bool ir = schema == 2 && type == "cab" && model == "cab_ir";
+        const bool nam = schema == 2 && type == "amp" && model == "nam";
+        if (!node["model"].isString() || (model != definition.model && !ir && !nam))
             invalid(path + ".model", "unsupported model for effect type");
+        if (ir || nam)
+        {
+            const auto asset = node["asset"];
+            keys(asset, {"id", "kind", "name"}, path + ".asset");
+            const auto id = text(asset["id"], path + ".asset.id");
+            if (id.length() != 64 || !id.containsOnly("0123456789abcdef")) invalid(path + ".asset.id", "expected a lowercase SHA-256 identifier");
+            if (!asset["kind"].isString() || asset["kind"].toString() != (ir ? "ir" : "nam")) invalid(path + ".asset.kind", "asset kind does not match the model");
+            text(asset["name"], path + ".asset.name");
+        }
+        else if (node.getDynamicObject()->hasProperty("asset")) invalid(path + ".asset", "builtin models forbid assets");
         if (!node["enabled"].isBool())
             invalid(path + ".enabled", "expected a boolean");
         if (static_cast<bool>(node["enabled"]))
