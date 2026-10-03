@@ -37,15 +37,19 @@ describe('portable local asset contract', () => {
     expect(() => validateToneSpec({ ...tone, schemaVersion: 1, chain: [{ ...cab, asset: ir }] })).toThrow('asset');
     expect(() => validateToneSpec({ ...tone, schemaVersion: 1, chain: [{ ...cab, model: 'cab_ir' }] })).toThrow('model');
     expect(() => validateToneSpec({ ...tone, schemaVersion: 1, chain: [{ ...node(tone, 'amp'), model: 'nam' }] })).toThrow('model');
+    expect(() => validateToneSpec({ ...tone, schemaVersion: 1, chain: [{ ...node(tone, 'drive'), model: 'nam' }] })).toThrow('model');
   });
 
   it('round trips SHA-256 references for the exact supported external models', () => {
     const irTone = validateToneSpec(importedNode('cab', 'cab_ir', ir));
     const namTone = validateToneSpec(importedNode('amp', 'nam', nam));
+    const pedalTone = validateToneSpec(importedNode('drive', 'nam', nam));
     expect(node(irTone, 'cab').asset).toEqual(ir);
     expect(node(namTone, 'amp').asset).toEqual(nam);
+    expect(node(pedalTone, 'drive').asset).toEqual(nam);
     expect(validateToneSpec(JSON.parse(JSON.stringify(irTone)) as unknown)).toEqual(irTone);
     expect(validateToneSpec(JSON.parse(JSON.stringify(namTone)) as unknown)).toEqual(namTone);
+    expect(validateToneSpec(JSON.parse(JSON.stringify(pedalTone)) as unknown)).toEqual(pedalTone);
   });
 
   it('requires an asset and the correct kind, and forbids refs on builtin or unrelated nodes', () => {
@@ -53,6 +57,9 @@ describe('portable local asset contract', () => {
     expect(() => validateToneSpec(importedNode('amp', 'nam'))).toThrow('asset');
     expect(() => validateToneSpec(importedNode('cab', 'cab_ir', nam))).toThrow('kind');
     expect(() => validateToneSpec(importedNode('amp', 'nam', ir))).toThrow('kind');
+    expect(() => validateToneSpec(importedNode('drive', 'nam'))).toThrow('asset');
+    expect(() => validateToneSpec(importedNode('drive', 'nam', ir))).toThrow('kind');
+    expect(() => validateToneSpec(importedNode('chorus', 'nam', nam))).toThrow('model');
     expect(() => validateToneSpec(importedNode('cab', EFFECT_CATALOG.cab.model, ir))).toThrow('builtin');
     expect(() => validateToneSpec(importedNode('drive', EFFECT_CATALOG.drive.model, ir))).toThrow('builtin');
     expect(() => validateToneSpec(importedNode('drive', 'cab_ir', ir))).toThrow('model');
@@ -96,7 +103,8 @@ describe('portable local asset contract', () => {
     const tone = createInitialTone();
     const before = JSON.stringify(tone);
     expect(() => setToneAsset(tone, 'missing-node', ir)).toThrow('unknown node');
-    expect(() => setToneAsset(tone, node(tone, 'drive').id, ir)).toThrow('only amp and cab');
+    expect(() => setToneAsset(tone, node(tone, 'drive').id, ir)).toThrow('requires a NAM');
+    expect(() => setToneAsset(tone, node(tone, 'eq').id, nam)).toThrow('only drive, amp and cab');
     expect(() => setToneAsset(tone, node(tone, 'cab').id, nam)).toThrow('requires an IR');
     expect(() => setToneAsset(tone, node(tone, 'amp').id, ir)).toThrow('requires a NAM');
     expect(() => setToneAsset(tone, node(tone, 'cab').id, { ...ir, id: 'bad' })).toThrow('SHA-256');
@@ -131,8 +139,40 @@ describe('portable local asset contract', () => {
     expect(ampDefinition.parameters.master?.label).toBe('Output trim');
     expect(ampDefinition.parameters.gain?.min).toBe(EFFECT_CATALOG.amp.parameters.gain?.min);
     expect(getNodeDefinition(cab).parameters.brightness?.label).toBe('IR brightness');
+    const pedal = node(setToneAsset(initial, node(initial, 'drive').id, nam), 'drive');
+    expect(getNodeDefinition(pedal)).toMatchObject({ name: 'NAM pedal', model: 'nam', parameters: {
+      gain: { label: 'Input trim' }, tone: { label: 'Post-capture tone' }, level: { label: 'Output trim' },
+    } });
     expect(EFFECT_CATALOG.amp.parameters.gain?.label).toBe('Gain');
     expect(getNodeDefinition(node(initial, 'amp'))).toBe(EFFECT_CATALOG.amp);
+  });
+
+  it('selects a pedal independently of the amp and preserves both through refinements and bypass', async () => {
+    const initial = createInitialTone();
+    const pedalAsset = { ...nam, id: 'c'.repeat(64), name: 'Fuzz pedal.nam' };
+    const pedalId = node(initial, 'drive').id;
+    const ampId = node(initial, 'amp').id;
+    const selected = setToneAsset(setToneAsset(initial, ampId, nam), pedalId, pedalAsset);
+    expect(node(selected, 'drive').parameters).toEqual({ gain: 0.5, tone: 0.5, level: 0.5 });
+    expect(node(selected, 'drive').id).toBe(pedalId);
+    const bypassedSelection = setToneAsset(setNodeEnabled(initial, pedalId, false), pedalId, pedalAsset);
+    expect(node(bypassedSelection, 'drive')).toMatchObject({ id: pedalId, enabled: false, parameters: { gain: 0.5, tone: 0.5, level: 0.5 } });
+    expect(bypassedSelection.chain.map(node => node.id)).toEqual(initial.chain.map(node => node.id));
+    expect(node(initial, 'drive').parameters).toEqual({ gain: 0.15, tone: 0.5, level: 0.6 });
+    const edited = setToneParameter(selected, pedalId, 'level', 0.44);
+    const alternate = setToneAsset(edited, pedalId, { ...pedalAsset, id: 'd'.repeat(64) });
+    expect(node(alternate, 'drive').parameters).toEqual(node(edited, 'drive').parameters);
+    expect(collectToneAssets(edited)).toEqual([pedalAsset, nam]);
+    const wider = await new ToneAgent().run({ prompt: 'make it wider', currentTone: edited });
+    expect(node(wider.tone, 'drive')).toEqual(node(edited, 'drive'));
+    expect(node(wider.tone, 'amp')).toEqual(node(edited, 'amp'));
+    const darker = await new ToneAgent().run({ prompt: 'darker and less gain', currentTone: wider.tone });
+    expect(node(darker.tone, 'drive')).toMatchObject({ model: 'nam', asset: pedalAsset, parameters: { level: 0.44 } });
+    expect(node(darker.tone, 'drive').parameters.tone).toBeLessThan(node(wider.tone, 'drive').parameters.tone ?? 0);
+    const bypass = setNodeEnabled(darker.tone, pedalId, false);
+    expect(collectToneAssets(bypass)).toEqual([nam]);
+    expect(node(setToneAsset(bypass, pedalId, undefined), 'drive')).toMatchObject({ model: 'builtin_drive', enabled: false });
+    expect(node(edited, 'drive').asset).toEqual(pedalAsset);
   });
 
   it('preserves external model selection and bypass states across contextual refinement', async () => {

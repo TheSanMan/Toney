@@ -1,4 +1,5 @@
 #include "Assets.h"
+#include "EffectProcessing.h"
 #include "NamModel.h"
 #include "Protocol.h"
 #include <NAM/lstm.h>
@@ -141,6 +142,43 @@ int main()
             changed = base; changed["config"]["in_channels"] = 2; mutated.replaceWithText(changed.dump());
             rejects("ASSET_UNSUPPORTED", [&] { toney::inspectAsset(descriptor(mutated)); }, "advanced multi-channel model rejected");
         }
+        // The same learned network used in two blocks must start independently in
+        // each block/channel. Neutral trim/EQ gives a direct sequential oracle.
+        const auto modelFile = juce::File(TONEY_NAM_FIXTURES).getChildFile("lstm.nam");
+        const auto modelRef = descriptor(modelFile);
+        const auto modelAsset = toney::loadAsset(modelRef);
+        auto paired = juce::JSON::parse(R"({"schemaVersion":2,"id":"pedal-amp","name":"NAM chain","revision":0,
+          "chain":[{"id":"pedal","type":"drive","model":"nam","enabled":true,"parameters":{"gain":0.5,"tone":0.5,"level":0.5},
+          "asset":{"id":"placeholder","kind":"nam","name":"lstm.nam"}},
+          {"id":"amp","type":"amp","model":"nam","enabled":true,"parameters":{"gain":0.5,"bass":0.5,"mid":0.5,"treble":0.5,"master":0.5},
+          "asset":{"id":"placeholder","kind":"nam","name":"lstm.nam"}}],
+          "metadata":{"createdAt":"2026-10-03T10:00:00Z","updatedAt":"2026-10-03T10:00:00Z","source":"test"}})");
+        for (auto& node : *paired["chain"].getArray()) node["asset"].getDynamicObject()->setProperty("id", modelRef["id"]);
+        expect(toney::validateTone(paired)["activeNodeCount"] == juce::var(2), "NAM pedal and amp validate together");
+        toney::AssetLibrary pairedLibrary(paired, juce::Array<juce::var>{modelRef});
+        auto actualPair = signal(), referencePair = signal();
+        toney::processEffects(actualPair, 48000, paired, &pairedLibrary);
+        toney::processNam(referencePair, 48000, *modelAsset.neural);
+        toney::processNam(referencePair, 48000, *modelAsset.neural);
+        expect(maxDifference(actualPair, referencePair) < 1e-6, "pedal then amp matches two fresh sequential model instances on stereo input");
+        auto repeatedPair = signal(); toney::processEffects(repeatedPair, 48000, paired, &pairedLibrary);
+        expect(maxDifference(actualPair, repeatedPair) == 0, "pedal/amp chain does not leak state across renders");
+        paired["chain"][1].getDynamicObject()->setProperty("enabled", false);
+        auto pedalOnly = signal(), directPedal = signal();
+        toney::processEffects(pedalOnly, 48000, paired, &pairedLibrary);
+        toney::processNam(directPedal, 48000, *modelAsset.neural);
+        expect(maxDifference(pedalOnly, directPedal) < 1e-6, "neutral pedal controls preserve learned capture audio");
+        paired["chain"][0]["parameters"].getDynamicObject()->setProperty("gain", 0.75);
+        paired["chain"][0]["parameters"].getDynamicObject()->setProperty("level", 0.25);
+        auto trimmed = signal(), directTrimmed = signal();
+        toney::processEffects(trimmed, 48000, paired, &pairedLibrary);
+        directTrimmed.applyGain(juce::Decibels::decibelsToGain(6.0f));
+        toney::processNam(directTrimmed, 48000, *modelAsset.neural);
+        directTrimmed.applyGain(juce::Decibels::decibelsToGain(-6.0f));
+        expect(maxDifference(trimmed, directTrimmed) < 1e-6, "pedal input/output trims correspond to independent signed dB gain");
+        paired["chain"][0]["parameters"].getDynamicObject()->setProperty("tone", 0.8);
+        auto brighter = signal(); toney::processEffects(brighter, 48000, paired, &pairedLibrary);
+        expect(maxDifference(brighter, trimmed) > 1e-5, "post-capture pedal tone changes rendered audio");
         const auto malformed = directory.getChildFile("bad.nam"); malformed.replaceWithText("{\"version\":\"0.5.4\",\"version\":\"0.5.3\"}");
         rejects("ASSET_INVALID", [&] { toney::inspectAsset(descriptor(malformed)); }, "duplicate model JSON fields rejected");
         malformed.replaceWithText("{\"weights\":[1e9999]}");

@@ -68,7 +68,7 @@ export function validateToneSpec(input: unknown): ToneSpec {
     const type = typeName as NodeType;
     const definition = EFFECT_CATALOG[type];
     const model = text(node.model, `${path}.model`);
-    const externalKind = type === 'cab' && model === 'cab_ir' ? 'ir' : type === 'amp' && model === 'nam' ? 'nam' : undefined;
+    const externalKind = type === 'cab' && model === 'cab_ir' ? 'ir' : (type === 'amp' || type === 'drive') && model === 'nam' ? 'nam' : undefined;
     let asset: AssetRef | undefined;
     if (model === definition.model) {
       if (Object.hasOwn(node, 'asset')) throw new ToneValidationError(`${path}.asset`, 'builtin models cannot reference external assets');

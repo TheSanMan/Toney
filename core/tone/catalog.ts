@@ -17,6 +17,13 @@ export const EFFECT_CATALOG: Record<NodeType, EffectDefinition> = {
 /** External processing retains the same parameter contract; these controls surround the imported model. */
 export function getNodeDefinition(node: ToneNode): EffectDefinition {
   const definition = EFFECT_CATALOG[node.type];
+  if (node.type === 'drive' && node.model === 'nam') return {
+    ...definition, name: 'NAM pedal', model: 'nam', parameters: {
+      gain: { ...definition.parameters.gain, label: 'Input trim' },
+      tone: { ...definition.parameters.tone, label: 'Post-capture tone' },
+      level: { ...definition.parameters.level, label: 'Output trim' },
+    },
+  };
   if (node.type === 'amp' && node.model === 'nam') return {
     ...definition, name: 'NAM amp', model: 'nam', parameters: {
       ...definition.parameters,

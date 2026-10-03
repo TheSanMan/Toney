@@ -47,15 +47,18 @@ export function setToneAsset(input: ToneSpec, nodeId: string, inputAsset: AssetR
   const tone = cloneTone(input);
   const node = tone.chain.find((entry) => entry.id === nodeId);
   if (!node) throw new ToneValidationError('nodeId', `unknown node ${nodeId}`);
-  if (node.type !== 'amp' && node.type !== 'cab') throw new ToneValidationError('nodeId', 'only amp and cab nodes support external assets');
+  if (node.type !== 'drive' && node.type !== 'amp' && node.type !== 'cab') throw new ToneValidationError('nodeId', 'only drive, amp and cab nodes support external assets');
   if (inputAsset === undefined) {
     delete node.asset;
     node.model = EFFECT_CATALOG[node.type].model;
   } else {
     const asset = validateAssetRef(inputAsset);
-    if (asset.kind !== (node.type === 'amp' ? 'nam' : 'ir')) throw new ToneValidationError('asset.kind', `${node.type} requires ${node.type === 'amp' ? 'a NAM' : 'an IR'} asset`);
+    if (asset.kind !== (node.type === 'cab' ? 'ir' : 'nam')) throw new ToneValidationError('asset.kind', `${node.type} requires ${node.type === 'cab' ? 'an IR' : 'a NAM'} asset`);
+    // Builtin distortion gain/level have different meanings from capture trims.
+    // First pedal selection auditions the exported capture at unity gain and EQ.
+    if (node.type === 'drive' && node.model !== 'nam') node.parameters = { gain: 0.5, tone: 0.5, level: 0.5 };
     node.asset = asset;
-    node.model = node.type === 'amp' ? 'nam' : 'cab_ir';
+    node.model = node.type === 'cab' ? 'cab_ir' : 'nam';
   }
   return revised(tone, 'manual');
 }

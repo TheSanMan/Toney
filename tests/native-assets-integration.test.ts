@@ -122,6 +122,29 @@ describe.skipIf(!existsSync(executable))('Actual native NAM and cabinet asset in
     expect(second.bytes).toEqual(first.bytes);
   });
 
+  it('renders a separate NAM pedal before NAM amp and IR, with deterministic independent state', () => {
+    const tone = rig([lstm, ir]);
+    const pedal = tone.chain.find(node => node.type === 'drive');
+    if (!pedal) throw new Error('Missing pedal block');
+    pedal.model = 'nam'; pedal.enabled = true;
+    pedal.parameters = { gain: 0.5, tone: 0.5, level: 0.5 };
+    pedal.asset = { id: wavenet.id, kind: 'nam', name: 'upstream-pedal-fixture.nam' };
+    const enabled = render(tone, [wavenet, lstm, ir], join(directory, 'pedal-amp-cab.wav'));
+    const repeat = render(tone, [wavenet, lstm, ir], join(directory, 'pedal-amp-cab-repeat.wav'));
+    expect(repeat.bytes).toEqual(enabled.bytes);
+    pedal.enabled = false;
+    const bypassed = render(tone, [lstm, ir], join(directory, 'pedal-bypassed.wav'));
+    expect(bypassed.bytes).not.toEqual(enabled.bytes);
+    expect(bypassed.wave.peak).toBeGreaterThan(0);
+    pedal.enabled = true;
+    const request = createNativeRenderRequest(tone);
+    const outputPath = join(directory, 'missing-pedal.wav');
+    const response = exchange({ ...request, render: { inputPath, outputPath, assets: [lstm, ir] } });
+    expect(response).toMatchObject({ protocolVersion: 1, requestId: request.requestId, ok: false, error: { code: 'ASSET_MISSING' } });
+    expect(() => validateNativeResponse(request, response)).toThrow();
+    expect(existsSync(outputPath)).toBe(false);
+  });
+
   it('allows missing assets when bypassed and reports a correlated error when enabled', () => {
     const tone = rig([wavenet, ir], false);
     const bypass = render(tone, [], join(directory, 'missing-bypassed.wav'));

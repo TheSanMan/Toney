@@ -208,15 +208,25 @@ void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const 
         }
         else if (node["model"].toString() == "nam")
         {
-            if (assets == nullptr) throw ControlError("ASSET_MISSING", "Neural amp model is unavailable.");
+            if (assets == nullptr) throw ControlError("ASSET_MISSING", "Neural model is unavailable.");
             const auto& definition = assets->get(node["asset"]["id"].toString()).neural;
-            if (!definition) throw ControlError("ASSET_INVALID", "Neural amp requires a NAM model asset.");
+            if (!definition) throw ControlError("ASSET_INVALID", "Neural processing requires a NAM model asset.");
             samples.applyGain(juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "gain") - 0.5) * 24)));
             processNam(samples, sampleRate, *definition);
-            filter(samples, Coefficients::makeLowShelf(sampleRate, frequency(180, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "bass") - 0.5) * 20))));
-            filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(850, sampleRate), 0.8f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "mid") - 0.5) * 18))));
-            filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2600, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "treble") - 0.5) * 20))));
-            samples.applyGain(juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "master") - 0.5) * 24)));
+            if (type == "drive")
+            {
+                // Captured pedal knobs are fixed. This shelf is deliberately outside
+                // the learned circuit; its neutral midpoint preserves capture audio.
+                filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2500, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "tone") - 0.5) * 12))));
+                samples.applyGain(juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "level") - 0.5) * 24)));
+            }
+            else
+            {
+                filter(samples, Coefficients::makeLowShelf(sampleRate, frequency(180, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "bass") - 0.5) * 20))));
+                filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(850, sampleRate), 0.8f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "mid") - 0.5) * 18))));
+                filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2600, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "treble") - 0.5) * 20))));
+                samples.applyGain(juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "master") - 0.5) * 24)));
+            }
         }
         else if (type == "compressor") compress(samples, sampleRate, node);
         else if (type == "drive")

@@ -127,7 +127,7 @@ juce::var validateTone(const juce::var& tone)
         const auto& definition = found->second;
         const auto model = node["model"].toString();
         const bool ir = schema == 2 && type == "cab" && model == "cab_ir";
-        const bool nam = schema == 2 && type == "amp" && model == "nam";
+        const bool nam = schema == 2 && (type == "amp" || type == "drive") && model == "nam";
         if (!node["model"].isString() || (model != definition.model && !ir && !nam))
             invalid(path + ".model", "unsupported model for effect type");
         if (ir || nam)
