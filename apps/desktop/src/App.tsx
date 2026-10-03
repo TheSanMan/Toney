@@ -5,7 +5,8 @@ import {
   type AgentTrace, type ToneIntent, type ToneNode, type ToneSpec,
 } from '../../../core';
 import { bufferToWav, createDemoBuffer, renderTone } from './audio/preview';
-import { desktopOllamaTransport, exportNativeFile, isDesktop } from './native/bridge';
+import { desktopOllamaTransport, exportNativeFile, isDesktop, renderNativeAudio } from './native/bridge';
+import { NativeError } from '../../../core/native/protocol';
 import { AudioDevicesPanel, type NativeDiagnostic } from './native/AudioDevicesPanel';
 
 const STORAGE_KEY = 'toney.workbench.v1';
@@ -88,7 +89,8 @@ export function App() {
   const [source, setSource] = useState<AudioBuffer>();
   const [sourceName, setSourceName] = useState('Built-in plucked-string phrase');
   const [audioUrl, setAudioUrl] = useState('');
-  const [rendered, setRendered] = useState<AudioBuffer>();
+  const [renderedWav, setRenderedWav] = useState<Blob>();
+  const [renderBackend, setRenderBackend] = useState(() => isDesktop() ? 'native' : 'browser');
   const [listenMode, setListenMode] = useState('');
   const [diagnostics, setDiagnostics] = useState(false);
   const [nativeDiagnostics, setNativeDiagnostics] = useState<NativeDiagnostic[]>([]);
@@ -122,7 +124,7 @@ export function App() {
   useEffect(() => {
     audio.current?.pause();
     setAudioUrl('');
-    setRendered(undefined);
+    setRenderedWav(undefined);
     setListenMode('');
   }, [tone, source]);
 
@@ -157,27 +159,47 @@ export function App() {
     setRendering(true);
     setError('');
     audio.current?.pause();
+    const native = !dry && renderBackend === 'native';
+    const start = performance.now();
     try {
-      let result: AudioBuffer;
+      let wav: Blob;
+      let description = dry ? 'Dry source' : `Browser rig · r${tone.revision}`;
       if (dry) {
-        if (source) result = source;
+        if (source) wav = bufferToWav(source);
         else {
-          const context = new AudioContext();
-          result = createDemoBuffer(context);
+          const context = new AudioContext({ sampleRate: 44_100 });
+          wav = bufferToWav(createDemoBuffer(context));
           await context.close();
         }
-      } else result = await renderTone(tone, source);
-      const url = URL.createObjectURL(bufferToWav(result));
-      setRendered(result);
+      } else if (native) {
+        let input: Blob;
+        if (source) input = bufferToWav(source);
+        else {
+          const context = new AudioContext({ sampleRate: 44_100 });
+          input = bufferToWav(createDemoBuffer(context));
+          await context.close();
+        }
+        const rendered = await renderNativeAudio(tone, input);
+        wav = rendered.wav;
+        description = `Native rig · r${tone.revision} · ${rendered.result.attenuationDb.toFixed(1)} dB headroom attenuation`;
+        setNativeDiagnostics((items) => [...items, { operation: 'offline-render', requestId: rendered.requestId,
+          durationMs: Math.round(performance.now() - start), result: { ...rendered.result, sourceName } }].slice(-20));
+      } else wav = bufferToWav(await renderTone(tone, source));
+      const url = URL.createObjectURL(wav);
+      setRenderedWav(wav);
       setAudioUrl(url);
-      setListenMode(dry ? 'Dry source' : 'Processed rig');
+      setListenMode(description);
       if (audio.current) {
         audio.current.src = url;
         try { await audio.current.play(); }
-        catch { setListenMode(`${dry ? 'Dry source' : 'Processed rig'} · press play below`); }
+        catch { setListenMode(`${description} · press play below`); }
       }
     } catch (reason) {
-      setError(`Audio preview: ${reason instanceof Error ? reason.message : 'Rendering failed.'}`);
+      if (reason instanceof NativeError) {
+        setError(`${reason.code}: ${reason.message} · ${reason.requestId}`);
+        setNativeDiagnostics((items) => [...items, { operation: 'offline-render', requestId: reason.requestId,
+          durationMs: Math.round(performance.now() - start), error: { code: reason.code, message: reason.message } }].slice(-20));
+      } else setError(`Audio preview: ${reason instanceof Error ? reason.message : 'Rendering failed.'}`);
     } finally { setRendering(false); }
   }
 
@@ -214,7 +236,7 @@ export function App() {
     <header className="app-header">
       <a className="wordmark" href="#">toney<span>●</span></a>
       <span className="tagline">YOUR TONE, DIALED IN.</span>
-      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>03</b></div>
+      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>04</b></div>
     </header>
     <main className="workspace">
       <aside className="engineer-panel">
@@ -266,18 +288,21 @@ export function App() {
 
         <AudioDevicesPanel tone={tone} locked={locked} onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))} />
         <section className="listening-panel">
-          <div className="listening-heading"><div className="eyebrow">HEAR THE DIFFERENCE</div><span>OFFLINE AUDIO PREVIEW</span></div>
+          <div className="listening-heading"><div className="eyebrow">HEAR THE DIFFERENCE</div>
+            <label className="render-backend">Render with <select aria-label="Audio rendering backend" value={renderBackend} disabled={locked} onChange={(event) => setRenderBackend(event.target.value)}>
+              <option value="browser">Browser preview</option><option value="native" disabled={!desktop}>Native builtin DSP{desktop ? '' : ' · desktop required'}</option>
+            </select></label></div>
           <div className="listen-row"><div className="source-info"><span className="waveform">▂▅▃▇▂▅▆▃▁▅▃▇▅▂▆▃▁</span><strong>{sourceName}</strong></div>
             <button disabled={locked} onClick={() => diInput.current?.click()}>Import clean DI</button>
             {source && <button disabled={locked} onClick={() => { setSource(undefined); setSourceName('Built-in plucked-string phrase'); }}>Use demo</button>}
           </div>
           <div className="playback-row"><button disabled={locked} onClick={() => void listen(true)}>▷ Dry source</button>
             <button className="primary" disabled={locked} onClick={() => void listen()}>{rendering ? 'Rendering…' : '▶ Hear this rig'}</button>
-            {rendered && <button onClick={() => void saveFile('toney-preview.wav', bufferToWav(rendered))}>Export WAV ↓</button>}
+            {renderedWav && <button disabled={locked} onClick={() => void saveFile('toney-preview.wav', renderedWav)}>Export WAV ↓</button>}
             <span>{listenMode}</span>
           </div>
           <audio ref={audio} controls src={audioUrl || undefined} aria-label="Tone preview" />
-          <p className="preview-note">Synthetic plucked strings by default. Import your guitar DI for a useful audition. Effects are browser approximations; native amps, cabinet IRs, and live input come next.</p>
+          <p className="preview-note">Synthetic plucked strings by default. Import your guitar DI for a useful audition. Compare browser and native builtin effects on the same source. Native rendering requires the desktop app; NAM, measured cabinet IRs, and live input come later.</p>
         </section>
         <section className="history-panel"><div className="history-heading"><span className="eyebrow">TONE HISTORY</span>
           <button disabled={locked} onClick={() => setHistory((items) => [...items, tone].slice(-20))}>Snapshot current rig +</button></div>

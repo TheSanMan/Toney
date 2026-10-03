@@ -62,7 +62,7 @@ export function AudioDevicesPanel({ tone, locked, onDiagnostic }: {
   const currentValidated = validation?.toneId === tone.id && validation.revision === tone.revision;
   return <section className="native-panel">
     <div className="native-heading"><div><span className="eyebrow">AUDIO DEVICES</span>
-      <p>{desktop ? 'System device discovery · live guitar input comes next' : 'Open the desktop app for system audio devices'}</p></div>
+      <p>{desktop ? 'System device discovery · live guitar input comes later' : 'Open the desktop app for system audio devices'}</p></div>
       <span className={`native-status ${info ? 'ready' : ''}`}>{desktop ? (info ? 'NATIVE CONTROL READY' : (error ? 'NATIVE CONTROL UNAVAILABLE' : 'CHECKING NATIVE CONTROL')) : 'BROWSER AUDITION'}</span>
     </div>
     {desktop && <>

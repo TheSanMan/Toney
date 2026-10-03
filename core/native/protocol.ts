@@ -1,12 +1,18 @@
 import { validateToneSpec, type ToneSpec } from '../index';
 
 export type NativeCommand = 'get_engine_info' | 'get_audio_devices' | 'validate_tone_spec';
-export interface NativeRequest { protocolVersion: 1; requestId: string; command: NativeCommand; tone?: ToneSpec }
+export interface NativeControlRequest { protocolVersion: 1; requestId: string; command: NativeCommand; tone?: ToneSpec }
+export interface NativeRenderRequest { protocolVersion: 1; requestId: string; command: 'render_audio'; tone: ToneSpec }
+export type NativeRequest = NativeControlRequest | NativeRenderRequest;
 export interface NativeAudioDevice { id: string; name: string; kind: 'input' | 'output'; backend: string; isDefault: boolean }
 export interface EngineInfo { kind: 'engine-info'; engineVersion: string; backend: string; capabilities: string[] }
 export interface DeviceInventory { kind: 'audio-devices'; devices: NativeAudioDevice[] }
 export interface RigValidation { kind: 'rig-valid'; toneId: string; revision: number; nodeCount: number; activeNodeCount: number }
-export type NativeResult = EngineInfo | DeviceInventory | RigValidation;
+export interface AudioRenderResult {
+  kind: 'audio-render'; toneId: string; revision: number; sampleRate: number; channels: number;
+  inputFrames: number; outputFrames: number; peak: number; attenuationDb: number; engineVersion: string;
+}
+export type NativeResult = EngineInfo | DeviceInventory | RigValidation | AudioRenderResult;
 
 export class NativeError extends Error {
   constructor(readonly code: string, message: string, readonly requestId: string) {
@@ -14,7 +20,7 @@ export class NativeError extends Error {
   }
 }
 
-export function createNativeRequest(command: NativeCommand, tone?: ToneSpec): NativeRequest {
+export function createNativeRequest(command: NativeCommand, tone?: ToneSpec): NativeControlRequest {
   const requestId = `native_${crypto.randomUUID()}`;
   if (command === 'validate_tone_spec') {
     if (!tone) throw new NativeError('INVALID_NATIVE_REQUEST', 'A rig is required for validation.', requestId);
@@ -22,6 +28,10 @@ export function createNativeRequest(command: NativeCommand, tone?: ToneSpec): Na
   }
   if (tone) throw new NativeError('INVALID_NATIVE_REQUEST', 'This operation does not accept a rig.', requestId);
   return { protocolVersion: 1, requestId, command };
+}
+
+export function createNativeRenderRequest(tone: ToneSpec): NativeRenderRequest {
+  return { protocolVersion: 1, requestId: `render_${crypto.randomUUID()}`, command: 'render_audio', tone: validateToneSpec(tone) };
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -62,5 +72,19 @@ export function validateNativeResponse(request: NativeRequest, input: unknown): 
         || result.toneId !== request.tone.id || result.revision !== request.tone.revision
         || result.nodeCount !== request.tone.chain.length || result.activeNodeCount !== request.tone.chain.filter((node) => node.enabled).length) return invalid();
       return { kind: 'rig-valid', toneId: result.toneId, revision: result.revision, nodeCount: result.nodeCount, activeNodeCount: result.activeNodeCount };
+    case 'render_audio': {
+      if (result.kind !== 'audio-render' || result.toneId !== request.tone.id || result.revision !== request.tone.revision
+        || !count(result.sampleRate) || result.sampleRate < 8000 || result.sampleRate > 96000
+        || ![1, 2].includes(Number(result.channels)) || typeof result.channels !== 'number'
+        || !count(result.inputFrames) || result.inputFrames === 0 || result.inputFrames > result.sampleRate * 90
+        || !count(result.outputFrames) || result.outputFrames < result.inputFrames || result.outputFrames > result.inputFrames + result.sampleRate * 12
+        || 44 + result.outputFrames * result.channels * 2 > 32 * 1024 * 1024
+        || typeof result.peak !== 'number' || !Number.isFinite(result.peak) || result.peak < 0 || result.peak > 0.8501
+        || typeof result.attenuationDb !== 'number' || !Number.isFinite(result.attenuationDb) || result.attenuationDb > 0
+        || !text(result.engineVersion)) return invalid();
+      return { kind: 'audio-render', toneId: request.tone.id, revision: request.tone.revision, sampleRate: result.sampleRate,
+        channels: result.channels, inputFrames: result.inputFrames, outputFrames: result.outputFrames,
+        peak: result.peak, attenuationDb: result.attenuationDb, engineVersion: result.engineVersion };
+    }
   }
 }
