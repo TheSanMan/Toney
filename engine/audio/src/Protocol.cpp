@@ -50,7 +50,7 @@ juce::var handleRequest(const juce::String& json)
             || static_cast<double>(version) != protocolVersion)
             throw ControlError("UNSUPPORTED_PROTOCOL", "Only protocol version 1 is supported.");
 
-        const std::set<juce::String> allowed {"protocolVersion", "requestId", "command", "tone"};
+        const std::set<juce::String> allowed {"protocolVersion", "requestId", "command", "tone", "render"};
         for (const auto& property : request.getDynamicObject()->getProperties())
             if (allowed.count(property.name.toString()) == 0)
                 throw ControlError("INVALID_REQUEST", "Request contains an unknown field.");
@@ -60,16 +60,20 @@ juce::var handleRequest(const juce::String& json)
         const auto command = request["command"].toString();
         if ((command == "get_engine_info" || command == "get_audio_devices")
             && request.getDynamicObject()->hasProperty("tone"))
-            throw ControlError("INVALID_REQUEST", "tone is only accepted by validate_tone_spec.");
+            throw ControlError("INVALID_REQUEST", "tone is only accepted by tone validation and audio rendering.");
+        if (command != "render_audio" && request.getDynamicObject()->hasProperty("render"))
+            throw ControlError("INVALID_REQUEST", "render is only accepted by render_audio.");
         juce::var result;
         if (command == "get_engine_info")
-            result = makeObject({{"kind", "engine-info"}, {"engineVersion", "0.2.0"},
+            result = makeObject({{"kind", "engine-info"}, {"engineVersion", "0.3.0"},
                                  {"backend", "JUCE"},
-                                 {"capabilities", juce::Array<juce::var>{"device-enumeration", "rig-validation"}}});
+                                 {"capabilities", juce::Array<juce::var>{"device-enumeration", "rig-validation", "offline-render"}}});
         else if (command == "get_audio_devices")
             result = enumerateDevices();
         else if (command == "validate_tone_spec")
             result = validateTone(request["tone"]);
+        else if (command == "render_audio")
+            result = renderAudio(request["tone"], request["render"]);
         else
             throw ControlError("UNKNOWN_COMMAND", "Unsupported engine command.");
 

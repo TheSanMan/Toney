@@ -23,5 +23,6 @@ juce::var errorResponse(const juce::String& requestId, const juce::String& code,
                         const juce::String& message);
 juce::var enumerateDevices();
 juce::var validateTone(const juce::var& tone);
+juce::var renderAudio(const juce::var& tone, const juce::var& render);
 juce::var makeObject(std::initializer_list<std::pair<juce::Identifier, juce::var>> fields);
 }

@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
-use std::{io::Write, path::Path};
+use std::{
+    io::{Read, Write},
+    path::Path,
+};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
@@ -34,6 +37,15 @@ struct EngineRequest {
     command: EngineCommand,
     #[serde(skip_serializing_if = "Option::is_none")]
     tone: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    render: Option<RenderPaths>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RenderPaths {
+    input_path: String,
+    output_path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -42,10 +54,20 @@ enum EngineCommand {
     GetEngineInfo,
     GetAudioDevices,
     ValidateToneSpec,
+    RenderAudio,
 }
 
 fn validate_engine_request(value: Value) -> Result<EngineRequest, NativeError> {
     let id = value.get("requestId").and_then(Value::as_str);
+    if value.get("command").and_then(Value::as_str) == Some("render_audio")
+        || value.get("render").is_some()
+    {
+        return Err(failure(
+            "ENGINE_REQUEST_FORBIDDEN",
+            "Audio rendering is available only through the dedicated native render command.",
+            id,
+        ));
+    }
     if serde_json::to_vec(&value).map_or(true, |bytes| bytes.len() > MAX_ENGINE_BYTES) {
         return Err(failure(
             "ENGINE_REQUEST_TOO_LARGE",
@@ -67,19 +89,7 @@ fn validate_engine_request(value: Value) -> Result<EngineRequest, NativeError> {
             id,
         ));
     }
-    if request.request_id.is_empty()
-        || request.request_id.len() > 128
-        || !request
-            .request_id
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"-_.:".contains(&c))
-    {
-        return Err(failure(
-            "ENGINE_REQUEST_ID_INVALID",
-            "Request ID must be 1–128 ASCII letters, digits, or -_.:.",
-            None,
-        ));
-    }
+    validate_request_id(&request.request_id)?;
     match request.command {
         EngineCommand::ValidateToneSpec if !request.tone.as_ref().is_some_and(Value::is_object) => {
             return Err(failure(
@@ -131,6 +141,7 @@ fn validate_engine_response(bytes: &[u8], request: &EngineRequest) -> Result<Val
                 EngineCommand::GetEngineInfo => "engine-info",
                 EngineCommand::GetAudioDevices => "audio-devices",
                 EngineCommand::ValidateToneSpec => "rig-valid",
+                EngineCommand::RenderAudio => "audio-render",
             };
             if value.pointer("/result/kind").and_then(Value::as_str) != Some(expected) {
                 return Err(failure(
@@ -165,7 +176,19 @@ async fn native_engine_request(
     app: tauri::AppHandle,
     request: Value,
 ) -> Result<Value, NativeError> {
-    let request = validate_engine_request(request)?;
+    run_engine_request(
+        app,
+        validate_engine_request(request)?,
+        Duration::from_secs(10),
+    )
+    .await
+}
+
+async fn run_engine_request(
+    app: tauri::AppHandle,
+    request: EngineRequest,
+    deadline: Duration,
+) -> Result<Value, NativeError> {
     let id = Some(request.request_id.as_str());
     let command = app
         .shell()
@@ -182,7 +205,7 @@ async fn native_engine_request(
         let _ = child.kill();
         return Err(failure("ENGINE_WRITE_FAILED", error.to_string(), id));
     }
-    let response = tokio::time::timeout(Duration::from_secs(10), async {
+    let response = tokio::time::timeout(deadline, async {
         let mut output_bytes = 0usize;
         let mut stdout = Vec::new();
         while let Some(event) = events.recv().await {
@@ -240,10 +263,195 @@ async fn native_engine_request(
     response.unwrap_or_else(|_| {
         Err(failure(
             "ENGINE_TIMEOUT",
-            "Native engine did not respond within 10 seconds.",
+            format!(
+                "Native engine did not respond within {} seconds.",
+                deadline.as_secs()
+            ),
             id,
         ))
     })
+}
+
+fn validate_request_id(id: &str) -> Result<(), NativeError> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_.:".contains(&c))
+    {
+        return Err(failure(
+            "ENGINE_REQUEST_ID_INVALID",
+            "Request ID must be 1–128 ASCII letters, digits, or -_.:.",
+            None,
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RenderRequest {
+    protocol_version: u32,
+    request_id: String,
+    tone: Value,
+    data: Vec<u8>,
+}
+
+fn validate_render_request(value: Value) -> Result<RenderRequest, NativeError> {
+    let id = value
+        .get("requestId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let request: RenderRequest = serde_json::from_value(value)
+        .map_err(|_| failure("RENDER_REQUEST_INVALID", "Audio rendering requires version, request ID, tone, and WAV bytes without additional fields.", id.as_deref()))?;
+    validate_render_bounds(&request)?;
+    Ok(request)
+}
+
+fn validate_render_bounds(request: &RenderRequest) -> Result<(), NativeError> {
+    let id = Some(request.request_id.as_str());
+    validate_request_id(&request.request_id)?;
+    if request.protocol_version != 1 {
+        return Err(failure(
+            "ENGINE_PROTOCOL_UNSUPPORTED",
+            "Native engine protocol must be version 1.",
+            id,
+        ));
+    }
+    if !request.tone.is_object() {
+        return Err(failure(
+            "RENDER_TONE_INVALID",
+            "Audio rendering requires a ToneSpec object.",
+            id,
+        ));
+    }
+    if serde_json::to_vec(&request.tone).map_or(true, |bytes| bytes.len() > MAX_ENGINE_BYTES) {
+        return Err(failure(
+            "RENDER_TONE_TOO_LARGE",
+            "Render tone exceeds 256 KiB.",
+            id,
+        ));
+    }
+    if request.data.is_empty() || request.data.len() > MAX_EXPORT_BYTES {
+        return Err(failure(
+            "RENDER_INPUT_TOO_LARGE",
+            "Render input must contain WAV bytes and be at most 32 MiB.",
+            id,
+        ));
+    }
+    Ok(())
+}
+
+fn stage_render(data: &[u8]) -> std::io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("toney-render-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    let directory = builder.tempdir()?;
+    std::fs::write(directory.path().join("input.wav"), data)?;
+    Ok(directory)
+}
+
+fn read_render_output(directory: &Path, id: &str) -> Result<Vec<u8>, NativeError> {
+    let path = directory.join("output.wav");
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|error| failure("RENDER_OUTPUT_MISSING", error.to_string(), Some(id)))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(failure(
+            "RENDER_OUTPUT_INVALID",
+            "Native render output must be a regular WAV file.",
+            Some(id),
+        ));
+    }
+    if metadata.len() > MAX_EXPORT_BYTES as u64 {
+        return Err(failure(
+            "RENDER_OUTPUT_TOO_LARGE",
+            "Rendered output exceeds 32 MiB.",
+            Some(id),
+        ));
+    }
+    let file = std::fs::File::open(path)
+        .map_err(|error| failure("RENDER_OUTPUT_MISSING", error.to_string(), Some(id)))?;
+    let mut data = Vec::new();
+    file.take(MAX_EXPORT_BYTES as u64 + 1)
+        .read_to_end(&mut data)
+        .map_err(|error| failure("RENDER_OUTPUT_READ_FAILED", error.to_string(), Some(id)))?;
+    if data.len() > MAX_EXPORT_BYTES {
+        return Err(failure(
+            "RENDER_OUTPUT_TOO_LARGE",
+            "Rendered output exceeds 32 MiB.",
+            Some(id),
+        ));
+    }
+    if data.len() < 44 || &data[..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return Err(failure(
+            "RENDER_OUTPUT_INVALID",
+            "Native engine did not produce a RIFF/WAVE file.",
+            Some(id),
+        ));
+    }
+    Ok(data)
+}
+
+#[derive(Serialize)]
+struct RenderOutput {
+    response: Value,
+    data: Vec<u8>,
+}
+
+#[tauri::command]
+async fn native_render_audio(
+    app: tauri::AppHandle,
+    request: Value,
+) -> Result<RenderOutput, NativeError> {
+    let request = validate_render_request(request)?;
+    let request_id = request.request_id;
+    let id = Some(request_id.as_str());
+    let directory = tauri::async_runtime::spawn_blocking(move || stage_render(&request.data))
+        .await
+        .map_err(|error| failure("RENDER_STAGING_FAILED", error.to_string(), id))?
+        .map_err(|error| failure("RENDER_STAGING_FAILED", error.to_string(), id))?;
+    let engine_request = EngineRequest {
+        protocol_version: 1,
+        request_id: request_id.clone(),
+        command: EngineCommand::RenderAudio,
+        tone: Some(request.tone),
+        render: Some(RenderPaths {
+            input_path: directory
+                .path()
+                .join("input.wav")
+                .to_string_lossy()
+                .into_owned(),
+            output_path: directory
+                .path()
+                .join("output.wav")
+                .to_string_lossy()
+                .into_owned(),
+        }),
+    };
+    let response = run_engine_request(app, engine_request, Duration::from_secs(60)).await?;
+    if response.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Ok(RenderOutput {
+            response,
+            data: Vec::new(),
+        });
+    }
+    let output_id = request_id.clone();
+    let data = tauri::async_runtime::spawn_blocking(move || {
+        read_render_output(directory.path(), &output_id)
+    })
+    .await
+    .map_err(|error| {
+        failure(
+            "RENDER_OUTPUT_READ_FAILED",
+            error.to_string(),
+            Some(&request_id),
+        )
+    })??;
+    Ok(RenderOutput { response, data })
 }
 
 #[derive(Deserialize)]
@@ -446,6 +654,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             native_engine_request,
             native_export_file,
+            native_render_audio,
             native_ollama_chat
         ])
         .run(tauri::generate_context!())
@@ -560,6 +769,153 @@ mod tests {
         assert_eq!(std::fs::read(&existing).unwrap(), b"original preset");
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
         assert!(atomic_save(&destination.join("missing/preview.wav"), b"preview").is_err());
+    }
+
+    fn render_request() -> Value {
+        json!({"protocolVersion":1,"requestId":"render-123","tone":{"schemaVersion":1},"data":[82,73,70,70]})
+    }
+
+    fn test_wav() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&36u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&48000u32.to_le_bytes());
+        bytes.extend_from_slice(&96000u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn render_requests_reject_versions_ids_paths_and_extra_fields() {
+        assert!(validate_render_request(render_request()).is_ok());
+        for (key, value) in [
+            ("protocolVersion", json!(2)),
+            ("requestId", json!("../audio")),
+            ("tone", json!(null)),
+            ("inputPath", json!("/private/file.wav")),
+            ("outputPath", json!("/private/file.wav")),
+            (
+                "render",
+                json!({"inputPath":"/private/file.wav","outputPath":"/private/output.wav"}),
+            ),
+        ] {
+            let mut malformed = render_request();
+            malformed[key] = value;
+            assert!(validate_render_request(malformed).is_err());
+        }
+        let mut missing = render_request();
+        missing.as_object_mut().unwrap().remove("data");
+        assert!(validate_render_request(missing).is_err());
+    }
+
+    #[test]
+    fn render_bounds_reject_oversized_audio_tone_and_empty_audio() {
+        let mut request = validate_render_request(render_request()).unwrap();
+        request.data = vec![0; MAX_EXPORT_BYTES + 1];
+        assert_eq!(
+            validate_render_bounds(&request).unwrap_err().code,
+            "RENDER_INPUT_TOO_LARGE"
+        );
+        request.data.clear();
+        assert!(validate_render_bounds(&request).is_err());
+        request.data = test_wav();
+        request.tone = json!({"name":"x".repeat(MAX_ENGINE_BYTES)});
+        assert_eq!(
+            validate_render_bounds(&request).unwrap_err().code,
+            "RENDER_TONE_TOO_LARGE"
+        );
+    }
+
+    #[test]
+    fn general_engine_command_cannot_inject_render_paths_or_start_rendering() {
+        for value in [
+            json!({"protocolVersion":1,"requestId":"render-123","command":"render_audio","tone":{}}),
+            json!({"protocolVersion":1,"requestId":"render-123","command":"get_engine_info","render":{"inputPath":"/private/file.wav","outputPath":"/private/output.wav"}}),
+            json!({"protocolVersion":1,"requestId":"render-123","command":"get_engine_info","render":null}),
+        ] {
+            assert_eq!(
+                validate_engine_request(value).unwrap_err().code,
+                "ENGINE_REQUEST_FORBIDDEN"
+            );
+        }
+    }
+
+    #[test]
+    fn render_staging_is_private_and_cleans_up_on_success_or_read_failure() {
+        let input = test_wav();
+        let directory = stage_render(&input).unwrap();
+        let path = directory.path().to_owned();
+        assert!(path.is_absolute());
+        assert_eq!(std::fs::read(path.join("input.wav")).unwrap(), input);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        std::fs::write(path.join("output.wav"), &input).unwrap();
+        assert_eq!(read_render_output(&path, "render-123").unwrap(), input);
+        drop(directory);
+        assert!(!path.exists());
+        let failed = stage_render(&input).unwrap();
+        let failed_path = failed.path().to_owned();
+        assert_eq!(
+            read_render_output(&failed_path, "render-123")
+                .unwrap_err()
+                .code,
+            "RENDER_OUTPUT_MISSING"
+        );
+        drop(failed);
+        assert!(!failed_path.exists());
+    }
+
+    #[test]
+    fn rendered_output_requires_known_regular_bounded_riff_wave_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output.wav");
+        for data in [vec![0; 10], vec![0; 44]] {
+            std::fs::write(&path, data).unwrap();
+            assert_eq!(
+                read_render_output(directory.path(), "render-123")
+                    .unwrap_err()
+                    .code,
+                "RENDER_OUTPUT_INVALID"
+            );
+        }
+        let mut incorrect_wave = test_wav();
+        incorrect_wave[8] = b'X';
+        std::fs::write(&path, incorrect_wave).unwrap();
+        assert!(read_render_output(directory.path(), "render-123").is_err());
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_EXPORT_BYTES as u64 + 1)
+            .unwrap();
+        assert_eq!(
+            read_render_output(directory.path(), "render-123")
+                .unwrap_err()
+                .code,
+            "RENDER_OUTPUT_TOO_LARGE"
+        );
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(directory.path().join("input.wav"), &path).unwrap();
+            assert_eq!(
+                read_render_output(directory.path(), "render-123")
+                    .unwrap_err()
+                    .code,
+                "RENDER_OUTPUT_INVALID"
+            );
+        }
     }
 
     #[test]

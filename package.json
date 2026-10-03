@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "native:build": "node scripts/build-native.mjs",
+    "native:audition": "node scripts/native-audition.mjs",
     "desktop:dev": "npm run native:build && node scripts/desktop.mjs dev",
     "desktop:build": "npm run native:build && node scripts/desktop.mjs build",
     "desktop:check": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml && cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings"

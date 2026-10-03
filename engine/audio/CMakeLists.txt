@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(ToneyEngine VERSION 0.2.0 LANGUAGES C CXX)
+project(ToneyEngine VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,14 +21,18 @@ add_library(toney-engine-control STATIC
   src/JsonSyntax.cpp
   src/Protocol.cpp
   src/ToneValidation.cpp
+  src/EffectProcessing.cpp
+  src/AudioRender.cpp
+  src/WaveFiles.cpp
   src/DeviceInventory.cpp)
 target_include_directories(toney-engine-control PUBLIC src "${JUCE_SOURCE_DIR}/modules")
-target_link_libraries(toney-engine-control PRIVATE juce::juce_audio_devices)
+target_link_libraries(toney-engine-control PRIVATE juce::juce_audio_devices juce::juce_audio_formats juce::juce_dsp)
 target_compile_definitions(toney-engine-control PUBLIC
   JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
   JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+  JUCE_USE_FLAC=0 JUCE_USE_OGGVORBIS=0 JUCE_USE_MP3AUDIOFORMAT=0
   JUCE_APPLICATION_NAME_STRING="ToneyEngine"
-  JUCE_APPLICATION_VERSION_STRING="0.2.0")
+  JUCE_APPLICATION_VERSION_STRING="0.3.0")
 
 add_executable(toney-engine src/Main.cpp)
 target_link_libraries(toney-engine PRIVATE toney-engine-control)
@@ -39,4 +43,7 @@ if(BUILD_TESTING)
   add_executable(toney-engine-tests tests/ControlTests.cpp)
   target_link_libraries(toney-engine-tests PRIVATE toney-engine-control)
   add_test(NAME native-control-contract COMMAND toney-engine-tests)
+  add_executable(toney-render-tests tests/RenderTests.cpp)
+  target_link_libraries(toney-render-tests PRIVATE toney-engine-control)
+  add_test(NAME native-offline-render COMMAND toney-render-tests)
 endif()
