@@ -1,9 +1,37 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { createNativeRequest, createNativeRenderRequest, NativeError, validateNativeResponse, type NativeCommand, type NativeResult, type AudioRenderResult } from '../../../../core/native/protocol';
 import { inspectPcmWav } from '../../../../core/native/wav';
-import type { ToneSpec } from '../../../../core';
+import type { AssetRef, ToneSpec } from '../../../../core';
+import {
+  ASSET_SIZE_LIMITS, createNativeAssetImportRequest, createNativeAssetListRequest,
+  validateNativeAssetImportResponse, validateNativeAssetListResponse,
+  type NativeAssetDescriptor, type NativeAssetInventory,
+} from '../../../../core/native/assets';
 
 export const isDesktop = (): boolean => isTauri();
+
+export async function importNativeAsset(kind: AssetRef['kind'], file: File): Promise<{ requestId: string } & NativeAssetDescriptor> {
+  const request = createNativeAssetImportRequest(kind, file.name);
+  try {
+    if (!isDesktop()) throw new NativeError('DESKTOP_REQUIRED', 'Open Toney desktop to import IR and NAM assets.', request.requestId);
+    if (file.size <= 0 || file.size > ASSET_SIZE_LIMITS[kind]) throw new NativeError('ASSET_TOO_LARGE', `Choose a nonempty ${kind === 'ir' ? 'IR WAV up to 8 MiB' : 'NAM model up to 32 MiB'}.`, request.requestId);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.byteLength !== file.size) throw new NativeError('ASSET_IMPORT_INVALID', 'The selected asset bytes do not match its file size.', request.requestId);
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const expectedId = Array.from(hash, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const output: unknown = await invoke('native_import_asset', { request: { ...request, data: Array.from(bytes) } });
+    return { requestId: request.requestId, ...validateNativeAssetImportResponse(request, expectedId, output) };
+  } catch (error: unknown) { throw correlatedError(error, request.requestId); }
+}
+
+export async function listNativeAssets(): Promise<{ requestId: string } & NativeAssetInventory> {
+  const request = createNativeAssetListRequest();
+  try {
+    if (!isDesktop()) throw new NativeError('DESKTOP_REQUIRED', 'Open Toney desktop to access the local asset library.', request.requestId);
+    const output: unknown = await invoke('native_list_assets', { request });
+    return { requestId: request.requestId, ...validateNativeAssetListResponse(request, output) };
+  } catch (error: unknown) { throw correlatedError(error, request.requestId); }
+}
 
 function correlatedError(error: unknown, requestId: string): NativeError {
   if (error instanceof NativeError) return error;

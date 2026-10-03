@@ -1,8 +1,16 @@
-import { validateToneSpec, type ToneSpec } from '../../../../core';
+import { collectToneAssets, validateToneSpec, type ToneSpec } from '../../../../core';
 
 /** Browser audition DSP. This is an approximation, not NAM or measured cabinet IRs. */
 export const DEMO_SAMPLE_RATE = 44_100;
 export const DEMO_DURATION_SECONDS = 6;
+
+export class PreviewCapabilityError extends Error {
+  readonly code = 'NATIVE_ASSETS_REQUIRED';
+  constructor(readonly assetIds: string[]) {
+    super('Imported IR and NAM models require native rendering. Open Toney desktop to audition this rig, or bypass the imported models.');
+    this.name = 'PreviewCapabilityError';
+  }
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min;
@@ -222,6 +230,8 @@ function processNode(context: OfflineAudioContext, input: AudioNode, node: ToneN
 /** Offline rendering is deterministic and includes audible delay/reverb tails. */
 export async function renderTone(tone: ToneSpec, input?: AudioBuffer): Promise<AudioBuffer> {
   const validated = validateToneSpec(tone);
+  const assets = collectToneAssets(validated);
+  if (assets.length > 0) throw new PreviewCapabilityError(assets.map((asset) => asset.id));
   if (typeof OfflineAudioContext === 'undefined') {
     throw new Error('Audio preview requires a browser with OfflineAudioContext support.');
   }

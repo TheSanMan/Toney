@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AgentError, EFFECT_CATALOG, OllamaProvider, ToneAgent, createInitialTone,
-  setNodeEnabled, setToneParameter, validateToneSpec,
+  AgentError, getNodeDefinition, OllamaProvider, ToneAgent, createInitialTone, collectToneAssets,
+  setNodeEnabled, setToneParameter, setToneAsset, validateToneSpec,
   type AgentTrace, type ToneIntent, type ToneNode, type ToneSpec,
 } from '../../../core';
 import { bufferToWav, createDemoBuffer, renderTone } from './audio/preview';
 import { desktopOllamaTransport, exportNativeFile, isDesktop, renderNativeAudio } from './native/bridge';
 import { NativeError } from '../../../core/native/protocol';
 import { AudioDevicesPanel, type NativeDiagnostic } from './native/AudioDevicesPanel';
+import { AssetLibraryPanel } from './native/AssetLibraryPanel';
 
 const STORAGE_KEY = 'toney.workbench.v1';
 const EXAMPLES = [
@@ -38,9 +39,10 @@ async function download(name: string, value: Blob) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-function Knob({ label, accessibleLabel, value, min, max, unit, disabled, onChange }: {
+function Knob({ label, accessibleLabel, value, min, max, unit, displayValue, disabled, onChange }: {
   label: string; value: number; min: number; max: number; unit?: string;
   accessibleLabel: string;
+  displayValue?: number;
   disabled: boolean; onChange: (value: number) => void;
 }) {
   const position = (value - min) / (max - min);
@@ -49,7 +51,7 @@ function Knob({ label, accessibleLabel, value, min, max, unit, disabled, onChang
     <input type="range" min={min} max={max} step={0.001} value={value}
       disabled={disabled} aria-label={accessibleLabel} onChange={(event) => onChange(Number(event.target.value))} />
     <span className="knob-label">{label}</span>
-    <span className="knob-value">{value.toFixed(2)}{unit ? ` ${unit}` : ''}</span>
+    <span className="knob-value">{(displayValue ?? value).toFixed(2)}{unit ? ` ${unit}` : ''}</span>
   </label>;
 }
 
@@ -57,13 +59,16 @@ function Pedal({ node, busy, change, bypass }: {
   node: ToneNode; busy: boolean;
   change: (key: string, value: number) => void; bypass: () => void;
 }) {
-  const effect = EFFECT_CATALOG[node.type];
+  const effect = getNodeDefinition(node);
   return <article className={`pedal pedal-${node.type} ${node.enabled ? '' : 'bypassed'}`}>
     <div className="pedal-top"><span className={`led ${node.enabled ? 'lit' : ''}`} />
-      <span className="model-tag">{node.type === 'amp' ? 'PREVIEW AMP' : node.type === 'cab' ? 'CAB FILTER' : 'BUILT IN'}</span></div>
+      <span className="model-tag">{node.model === 'nam' ? 'NAM CAPTURE' : node.model === 'cab_ir' ? 'CABINET IR' : node.type === 'amp' ? 'PREVIEW AMP' : node.type === 'cab' ? 'CAB FILTER' : 'BUILT IN'}</span></div>
     <h3>{effect.name}</h3>
+    {node.asset && <span className="pedal-asset" title={node.asset.name}>{node.asset.name}</span>}
     <div className="knobs">{Object.entries(effect.parameters).map(([key, definition]) =>
       <Knob key={key} {...definition} value={node.parameters[key]} disabled={busy}
+        displayValue={node.model === 'nam' && (key === 'gain' || key === 'master') ? (node.parameters[key] - 0.5) * 24 : undefined}
+        unit={node.model === 'nam' && (key === 'gain' || key === 'master') ? 'dB' : definition.unit}
         accessibleLabel={`${effect.name} ${definition.label}`} onChange={(value) => change(key, value)} />,
     )}</div>
     <button className="footswitch" disabled={busy} onClick={bypass} aria-pressed={node.enabled}
@@ -183,7 +188,7 @@ export function App() {
         wav = rendered.wav;
         description = `Native rig · r${tone.revision} · ${rendered.result.attenuationDb.toFixed(1)} dB headroom attenuation`;
         setNativeDiagnostics((items) => [...items, { operation: 'offline-render', requestId: rendered.requestId,
-          durationMs: Math.round(performance.now() - start), result: { ...rendered.result, sourceName } }].slice(-20));
+          durationMs: Math.round(performance.now() - start), result: { ...rendered.result, sourceName, assets: collectToneAssets(tone) } }].slice(-20));
       } else wav = bufferToWav(await renderTone(tone, source));
       const url = URL.createObjectURL(wav);
       setRenderedWav(wav);
@@ -236,7 +241,7 @@ export function App() {
     <header className="app-header">
       <a className="wordmark" href="#">toney<span>●</span></a>
       <span className="tagline">YOUR TONE, DIALED IN.</span>
-      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>04</b></div>
+      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>06</b></div>
     </header>
     <main className="workspace">
       <aside className="engineer-panel">
@@ -281,16 +286,19 @@ export function App() {
             <button disabled={locked} onClick={() => saveJSON('toney-preset.json', tone)}>Save preset ↓</button></div></div>
         {saveStatus && <p className="save-status" role="status">{saveStatus}</p>}
         <div className="signal-strip"><span>INPUT</span>{tone.chain.map((node) => <span key={node.id} className={node.enabled ? 'active' : ''}>
-          <i />{EFFECT_CATALOG[node.type].name}</span>)}<span>OUTPUT ↗</span></div>
+          <i />{getNodeDefinition(node).name}</span>)}<span>OUTPUT ↗</span></div>
         <div className="pedalboard">{tone.chain.map((node) => <Pedal key={node.id} node={node} busy={locked}
           change={(key, value) => setTone(setToneParameter(tone, node.id, key, value))}
           bypass={() => setTone(setNodeEnabled(tone, node.id, !node.enabled))} />)}</div>
 
+        <AssetLibraryPanel tone={tone} locked={locked}
+          onSelect={(nodeId, asset) => setTone((current) => setToneAsset(current, nodeId, asset))}
+          onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))} />
         <AudioDevicesPanel tone={tone} locked={locked} onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))} />
         <section className="listening-panel">
           <div className="listening-heading"><div className="eyebrow">HEAR THE DIFFERENCE</div>
             <label className="render-backend">Render with <select aria-label="Audio rendering backend" value={renderBackend} disabled={locked} onChange={(event) => setRenderBackend(event.target.value)}>
-              <option value="browser">Browser preview</option><option value="native" disabled={!desktop}>Native builtin DSP{desktop ? '' : ' · desktop required'}</option>
+              <option value="browser">Browser preview</option><option value="native" disabled={!desktop}>Native DSP + NAM / IR{desktop ? '' : ' · desktop required'}</option>
             </select></label></div>
           <div className="listen-row"><div className="source-info"><span className="waveform">▂▅▃▇▂▅▆▃▁▅▃▇▅▂▆▃▁</span><strong>{sourceName}</strong></div>
             <button disabled={locked} onClick={() => diInput.current?.click()}>Import clean DI</button>
@@ -302,7 +310,7 @@ export function App() {
             <span>{listenMode}</span>
           </div>
           <audio ref={audio} controls src={audioUrl || undefined} aria-label="Tone preview" />
-          <p className="preview-note">Synthetic plucked strings by default. Import your guitar DI for a useful audition. Compare browser and native builtin effects on the same source. Native rendering requires the desktop app; NAM, measured cabinet IRs, and live input come later.</p>
+          <p className="preview-note">Synthetic plucked strings by default. Import your guitar DI for a useful audition. Imported NAM captures and cabinet IRs require native rendering in the desktop app. Browser preview supports builtin effects. Live guitar input comes later.</p>
         </section>
         <section className="history-panel"><div className="history-heading"><span className="eyebrow">TONE HISTORY</span>
           <button disabled={locked} onClick={() => setHistory((items) => [...items, tone].slice(-20))}>Snapshot current rig +</button></div>

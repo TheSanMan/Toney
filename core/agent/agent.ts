@@ -36,7 +36,7 @@ export class ToneAgent {
       event(compiled.changes.join('; ') || 'No parameter changes were needed.');
       stage = 'output-validation'; start = performance.now();
       const tone = validateToneSpec(compiled.tone);
-      event(`Schema v1 rig with ${tone.chain.length} nodes; revision ${tone.revision}`);
+      event(`Schema v${tone.schemaVersion} rig with ${tone.chain.length} nodes; revision ${tone.revision}`);
       const requested = result.changedPaths;
       const descriptions: string[] = [];
       if (result.issues.includes('muddy')) descriptions.push('I adjusted the strongest plausible source of muddiness in this rig.');

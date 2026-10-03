@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bufferToWav, createDemoSamples, createReverbSamples, limitSamples, normalizeSamples, renderTone } from '../apps/desktop/src/audio/preview';
-import { createInitialTone } from '../core';
+import { createInitialTone, setNodeEnabled, setToneAsset } from '../core';
 
 function rms(samples: Float32Array): number {
   return Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
@@ -120,6 +120,18 @@ describe('WAV export', () => {
 });
 
 describe('browser capability errors', () => {
+  it('requires native rendering for enabled external models before creating a browser audio graph', async () => {
+    const initial = createInitialTone();
+    for (const type of ['amp', 'cab'] as const) {
+      const entry = initial.chain.find((node) => node.type === type);
+      if (!entry) throw new Error('Missing model node');
+      const asset = { id: 'a'.repeat(64), kind: type === 'amp' ? 'nam' as const : 'ir' as const, name: type === 'amp' ? 'amp.nam' : 'cab.wav' };
+      const selected = setToneAsset(initial, entry.id, asset);
+      await expect(renderTone(selected)).rejects.toMatchObject({ code: 'NATIVE_ASSETS_REQUIRED', assetIds: [asset.id] });
+      await expect(renderTone(setNodeEnabled(selected, entry.id, false))).rejects.toThrow('OfflineAudioContext');
+    }
+  });
+
   it('fails explicitly when browser audio is unavailable', async () => {
     await expect(renderTone(createInitialTone())).rejects.toThrow('OfflineAudioContext');
   });
