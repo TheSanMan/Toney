@@ -1,5 +1,6 @@
 mod assets;
 mod chatgpt;
+mod live;
 mod tone3000;
 
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,7 @@ use std::{
     io::{Read, Write},
     path::Path,
 };
+use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
@@ -682,8 +684,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(tone3000::Tone3000State::default())
         .manage(chatgpt::ChatGptState::default())
+        .manage(live::LiveState::default())
         .invoke_handler(tauri::generate_handler![
             native_engine_request,
+            live::native_live_start,
+            live::native_live_update,
+            live::native_live_status,
+            live::native_live_stop,
             native_export_file,
             native_render_audio,
             assets::native_import_asset,
@@ -702,6 +709,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Toney desktop failed to start")
         .run(|app, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+            ) {
+                app.state::<live::LiveState>().shutdown();
+            }
             // Handle OAuth links in Rust. The deep-link plugin's default event emitter
             // broadcasts callback codes to webviews, so we use the native OS event.
             #[cfg(any(target_os = "macos", target_os = "ios"))]
