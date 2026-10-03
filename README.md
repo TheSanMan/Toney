@@ -97,12 +97,12 @@ The command prints paths to dry, bypass, crunch, and spacious WAVs plus their ri
 ### Try NAM and cabinet IRs
 
 1. Open the desktop app. Under **NAM amps & pedals · cabinet IRs**, choose **Browse amp models**, **Browse NAM pedals** or **Browse cabinet IRs**. TONE3000 opens in your system browser for sign-in, browsing, and audition. Selecting a tone returns to Toney.
-2. Choose a model variant and **Download to local library**. Then select it using **Amp model** or **Cabinet model**. You can also import your own `.nam` capture or cabinet `.wav` file. Downloads and imports add files to the library; selection applies them to the rig.
+2. Choose a model variant and **Download to local library**. Then select it using **Pedal model**, **Amp model** or **Cabinet model**. You can also import your own `.nam` capture or cabinet `.wav` file. Downloads and imports add files to the library; selection applies them to the rig.
 3. Choose **Native DSP + NAM / IR**, then **Hear this rig**. Compare with **Dry source**, bypass a node, or select its builtin model to compare processing on the same DI.
 4. NAM pedals replace the Drive block before the amp. First selection starts with neutral trims/EQ. Pedal gain/level are input/output trims (−12 to +12 dB), and tone is an external shelf (−6 to +6 dB). Choose **Builtin preview drive** or bypass the pedal for comparison. Classic captures suit drive/boost/fuzz, not complete delay/reverb/modulation simulations.
 5. NAM amp gain/master are input/output trims from −12 to +12 dB, centered at 0.5. Bass/mid/treble are external EQ around the fixed capture. They do not recreate the captured amp's physical controls.
-5. Snapshot/save a preset, restart, and reuse the imported files from the durable local library. On another device, reimport the same files; a missing file is shown explicitly and blocks rendering of its enabled node. Bypassed missing nodes do not block audition.
-6. Open **Diagnostics** to export the asset IDs, selected rig, render statistics, request IDs and errors. File contents are not included in traces or presets.
+6. Snapshot/save a preset, restart, and reuse the imported files from the durable local library. On another device, reimport the same files; a missing file is shown explicitly and blocks rendering of its enabled node. Bypassed missing nodes do not block audition.
+7. Open **Diagnostics** to export the asset IDs, selected rig, render statistics, request IDs and errors. File contents are not included in traces or presets.
 
 Supported NAM files are classic mono WaveNet and LSTM captures with file version 0.5.0–0.5.4, up to 32 MiB. Advanced, conditioned, multi-input/output and unknown architectures are rejected. Captures run at their declared sample rate; models without a rate use 48 kHz. Source audio is resampled for inference and returned at its original rate and channel count. Each source channel gets independent model state. These are offline auditions, not realtime latency measurements.
 
@@ -122,7 +122,7 @@ The browser harness supports builtin effects and preset editing. TONE3000 downlo
 6. **Neural amp integration:** official NAM inference, bounded capture validation, independent states and sample-rate conversion.
 7. **TONE3000 selection:** account authorization, compatible hosted tone browsing, explicit variant downloads, and durable creator/license metadata.
 8. **NAM pedals + ChatGPT:** safe file redirects, drive captures before the amp, native ChatGPT plan sign-in/model discovery, validated interpretation and useful explanations.
-8. **Realtime playing:** audio interface input, smoothing, meters, and device lifecycle testing.
+9. **Realtime playing:** audio interface input, smoothing, meters, and device lifecycle testing.
 
 Later work adds audio analysis, candidate search, reference matching, preferences, plugin hosting, and optional research. Each checkpoint must remain runnable and be committed before review. See [architecture](docs/architecture.md), [development workflow](docs/development.md), and [checkpoint log](docs/checkpoints.md).
 
