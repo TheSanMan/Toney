@@ -24,9 +24,15 @@ export const OLLAMA_INTENT_SCHEMA = {
   },
 };
 
+export type OllamaTransport = (body: string, signal: AbortSignal) => Promise<Response>;
+
+const browserTransport: OllamaTransport = (body, signal) => fetch('/api/ollama/chat', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, signal, body,
+});
+
 export class OllamaProvider implements IntentProvider {
   readonly name: string;
-  constructor(private readonly model: string) {
+  constructor(private readonly model: string, private readonly transport: OllamaTransport = browserTransport) {
     if (!model.trim() || model.length > 200) throw new Error('Select an installed Ollama model.');
     this.name = `Local Ollama (${model})`;
   }
@@ -37,13 +43,10 @@ export class OllamaProvider implements IntentProvider {
     try {
       let response: Response;
       try {
-        response = await fetch('/api/ollama/chat', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-          body: JSON.stringify({ model: this.model, stream: false, format: OLLAMA_INTENT_SCHEMA, options: { temperature: 0 }, messages: [
+        response = await this.transport(JSON.stringify({ model: this.model, stream: false, format: OLLAMA_INTENT_SCHEMA, options: { temperature: 0 }, messages: [
             { role: 'system', content: 'You are a guitar tone engineer. Translate the request into the provided perceptual intent schema. Values are 0 to 1. This is local inference. Return only structured JSON. Baseline is derived from current manual controls and is authoritative. For refinement, change only requested intent fields, list exactly those fields in changedPaths, and preserve all others. Never claim to have measured audio or verified an artist rig. If language is ambiguous, provide warnings. References are broad style cues. Use issues muddy or harsh only when the user requests those corrections. Never emit DSP parameter calls.' },
             { role: 'user', content: JSON.stringify({ prompt: request.prompt, baseline: request.baseline, mode: request.currentTone ? 'refine' : 'generate', ...(request.currentTone ? { currentTone: request.currentTone } : {}) }) },
-          ] }),
-        });
+          ] }), controller.signal);
       } catch (error: unknown) {
         throw new Error(controller.signal.aborted ? 'Local Ollama inference timed out after 45 seconds.' : 'Cannot reach local Ollama. Start Ollama and use an installed model.', { cause: error });
       }

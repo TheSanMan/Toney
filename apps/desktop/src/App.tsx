@@ -5,6 +5,8 @@ import {
   type AgentTrace, type ToneIntent, type ToneNode, type ToneSpec,
 } from '../../../core';
 import { bufferToWav, createDemoBuffer, renderTone } from './audio/preview';
+import { desktopOllamaTransport, exportNativeFile, isDesktop } from './native/bridge';
+import { AudioDevicesPanel, type NativeDiagnostic } from './native/AudioDevicesPanel';
 
 const STORAGE_KEY = 'toney.workbench.v1';
 const EXAMPLES = [
@@ -23,7 +25,8 @@ function readHistory(): ToneSpec[] {
   } catch { return []; }
 }
 
-function download(name: string, value: Blob) {
+async function download(name: string, value: Blob) {
+  if (isDesktop()) return exportNativeFile(name, value);
   const url = URL.createObjectURL(value);
   const link = document.createElement('a');
   link.href = url;
@@ -32,10 +35,6 @@ function download(name: string, value: Blob) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
-
-function jsonDownload(name: string, value: unknown) {
-  download(name, new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
 }
 
 function Knob({ label, accessibleLabel, value, min, max, unit, disabled, onChange }: {
@@ -92,10 +91,28 @@ export function App() {
   const [rendered, setRendered] = useState<AudioBuffer>();
   const [listenMode, setListenMode] = useState('');
   const [diagnostics, setDiagnostics] = useState(false);
+  const [nativeDiagnostics, setNativeDiagnostics] = useState<NativeDiagnostic[]>([]);
+  const [saveStatus, setSaveStatus] = useState('');
   const audio = useRef<HTMLAudioElement>(null);
   const presetInput = useRef<HTMLInputElement>(null);
   const diInput = useRef<HTMLInputElement>(null);
   const locked = busy || rendering;
+  const desktop = isDesktop();
+
+  async function saveFile(name: string, value: Blob) {
+    setError(''); setSaveStatus('');
+    try {
+      const saved = await download(name, value);
+      if (desktop) setSaveStatus(saved ? `${name} saved` : 'Save cancelled');
+    } catch (reason) {
+      const message = typeof reason === 'object' && reason !== null && 'message' in reason ? String(reason.message) : String(reason);
+      setError(`File export: ${message}`);
+    }
+  }
+
+  function saveJSON(name: string, value: unknown) {
+    void saveFile(name, new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
+  }
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(history)); }
@@ -121,7 +138,7 @@ export function App() {
     setError('');
     setLastRequest({ prompt, currentTone: tone, provider, model });
     try {
-      const agent = new ToneAgent(provider === 'ollama' ? new OllamaProvider(model.trim()) : undefined);
+      const agent = new ToneAgent(provider === 'ollama' ? new OllamaProvider(model.trim(), desktop ? desktopOllamaTransport : undefined) : undefined);
       const result = await agent.run({ prompt, currentTone: tone, previousIntent: intent });
       keep(result.tone);
       setIntent(result.intent);
@@ -197,7 +214,7 @@ export function App() {
     <header className="app-header">
       <a className="wordmark" href="#">toney<span>●</span></a>
       <span className="tagline">YOUR TONE, DIALED IN.</span>
-      <div className="local-badge"><span /> LOCAL WORKBENCH <b>01</b></div>
+      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>03</b></div>
     </header>
     <main className="workspace">
       <aside className="engineer-panel">
@@ -239,13 +256,15 @@ export function App() {
             setTone(createInitialTone()); setIntent(undefined); setWarnings([]);
             setMessage('A fresh starting rig. Describe the sound you want to build.');
           }}>New rig</button><button disabled={locked} onClick={() => presetInput.current?.click()}>Load preset</button>
-            <button disabled={locked} onClick={() => jsonDownload('toney-preset.json', tone)}>Save preset ↓</button></div></div>
+            <button disabled={locked} onClick={() => saveJSON('toney-preset.json', tone)}>Save preset ↓</button></div></div>
+        {saveStatus && <p className="save-status" role="status">{saveStatus}</p>}
         <div className="signal-strip"><span>INPUT</span>{tone.chain.map((node) => <span key={node.id} className={node.enabled ? 'active' : ''}>
           <i />{EFFECT_CATALOG[node.type].name}</span>)}<span>OUTPUT ↗</span></div>
         <div className="pedalboard">{tone.chain.map((node) => <Pedal key={node.id} node={node} busy={locked}
           change={(key, value) => setTone(setToneParameter(tone, node.id, key, value))}
           bypass={() => setTone(setNodeEnabled(tone, node.id, !node.enabled))} />)}</div>
 
+        <AudioDevicesPanel tone={tone} locked={locked} onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))} />
         <section className="listening-panel">
           <div className="listening-heading"><div className="eyebrow">HEAR THE DIFFERENCE</div><span>OFFLINE AUDIO PREVIEW</span></div>
           <div className="listen-row"><div className="source-info"><span className="waveform">▂▅▃▇▂▅▆▃▁▅▃▇▅▂▆▃▁</span><strong>{sourceName}</strong></div>
@@ -254,7 +273,7 @@ export function App() {
           </div>
           <div className="playback-row"><button disabled={locked} onClick={() => void listen(true)}>▷ Dry source</button>
             <button className="primary" disabled={locked} onClick={() => void listen()}>{rendering ? 'Rendering…' : '▶ Hear this rig'}</button>
-            {rendered && <button onClick={() => download('toney-preview.wav', bufferToWav(rendered))}>Export WAV ↓</button>}
+            {rendered && <button onClick={() => void saveFile('toney-preview.wav', bufferToWav(rendered))}>Export WAV ↓</button>}
             <span>{listenMode}</span>
           </div>
           <audio ref={audio} controls src={audioUrl || undefined} aria-label="Tone preview" />
@@ -273,8 +292,9 @@ export function App() {
     <footer><span><i /> LOCAL SESSION · {tone.chain.filter((node) => node.enabled).length} EFFECTS ENGAGED</span>
       <button onClick={() => setDiagnostics(!diagnostics)}>{diagnostics ? 'Close' : 'Open'} diagnostics {trace ? `· ${trace.id.slice(0, 8)}` : ''}</button></footer>
     {diagnostics && <section className="diagnostics"><div className="history-heading"><h3>Request diagnostics</h3>
-      <button onClick={() => jsonDownload('toney-diagnostics.json', { trace, request: lastRequest, currentTone: tone, error })}>Export trace ↓</button></div>
+      <button onClick={() => saveJSON('toney-diagnostics.json', { trace, request: lastRequest, nativeDiagnostics, currentTone: tone, error })}>Export trace ↓</button></div>
       <p>Exports include your prompt and rig. Diagnostics remain on this device.</p><pre>{JSON.stringify(trace ?? { status: 'No agent request yet.' }, null, 2)}</pre>
+      {nativeDiagnostics.length > 0 && <details><summary>Native requests</summary><pre>{JSON.stringify(nativeDiagnostics, null, 2)}</pre></details>}
       <details><summary>Current preset JSON</summary><p>If your browser blocks downloads, copy this text into a JSON file.</p>
         <textarea aria-label="Current preset JSON" readOnly value={JSON.stringify(tone, null, 2)} rows={12} /></details>
     </section>}

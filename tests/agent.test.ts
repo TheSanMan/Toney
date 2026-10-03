@@ -131,6 +131,24 @@ describe('local model boundary', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/ollama/chat');
   });
 
+  it('uses the injected desktop transport without making a browser request', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    const transport = vi.fn(async (body: string, signal: AbortSignal) => {
+      const payload = JSON.parse(body) as { model: string; stream: boolean };
+      expect(payload.model).toBe('installed-model');
+      expect(payload.stream).toBe(false);
+      expect(signal.aborted).toBe(false);
+      return new Response(JSON.stringify({ message: { content: JSON.stringify({
+        intent: DEFAULT_INTENT, changedPaths: ['character.width'], warnings: [], issues: [],
+      }) } }), { status: 200 });
+    });
+    const result = await new ToneAgent(new OllamaProvider('installed-model', transport)).run({ prompt: 'wide' });
+    expect(result.trace.provider).toContain('installed-model');
+    expect(transport).toHaveBeenCalledOnce();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed JSON, invalid intent and unavailable models without fallback', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
