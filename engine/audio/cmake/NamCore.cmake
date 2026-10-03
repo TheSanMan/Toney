@@ -31,12 +31,13 @@ endif()
 
 # Upstream's CMake builds tools rather than a consumable library. Compile only
 # the official DSP implementation needed by the two supported architectures.
+include("${CMAKE_CURRENT_LIST_DIR}/NamRealtime.cmake")
 add_library(toney-nam-core STATIC
-  "${TONEY_NAM_SOURCE}/NAM/activations.cpp"
-  "${TONEY_NAM_SOURCE}/NAM/dsp.cpp"
-  "${TONEY_NAM_SOURCE}/NAM/lstm.cpp"
-  "${TONEY_NAM_SOURCE}/NAM/wavenet.cpp")
-target_include_directories(toney-nam-core PUBLIC "${TONEY_NAM_SOURCE}" "${TONEY_NAM_SOURCE}/Dependencies/nlohmann")
+  "${TONEY_NAM_ADAPTER}/NAM/activations.cpp"
+  "${TONEY_NAM_ADAPTER}/NAM/dsp.cpp"
+  "${TONEY_NAM_ADAPTER}/NAM/lstm.cpp"
+  "${TONEY_NAM_ADAPTER}/NAM/wavenet.cpp")
+target_include_directories(toney-nam-core PUBLIC "${TONEY_NAM_ADAPTER}" "${TONEY_NAM_SOURCE}/Dependencies/nlohmann")
 target_include_directories(toney-nam-core SYSTEM PUBLIC "${TONEY_EIGEN_SOURCE}")
 target_compile_definitions(toney-nam-core PUBLIC NAM_SAMPLE_FLOAT EIGEN_MPL2_ONLY)
 target_compile_features(toney-nam-core PUBLIC cxx_std_17)

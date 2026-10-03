@@ -1,6 +1,16 @@
 # Native engine control helper
 
-The JUCE 8.0.14 C++17 helper provides real device enumeration, independent ToneSpec validation, deterministic offline WAV rendering through all eight built-in effects, imported cabinet IR convolution, and official NAM neural inference. Device queries scan names/defaults without opening audio streams. Rendering processes files without audio hardware. Realtime guitar input remains a later checkpoint.
+The JUCE 8.0.14 C++17 helper provides device enumeration, independent ToneSpec validation, offline WAV rendering, cabinet IR convolution, NAM neural inference and explicit live guitar monitoring. Device queries scan names/defaults without opening streams; offline rendering needs no hardware. Only the private persistent `--live` session can open input/output.
+
+## Live monitoring
+
+`--live` runs a JUCE event loop plus a serialized control thread. Correlated protocol-v1 newline requests use `start_live`, `update_live`, `get_live_status`, and `stop_live`. Start supplies `tone` and `live:{inputDeviceId,outputDeviceId,inputChannel,sampleRate,bufferSize,inputGainDb,outputGainDb,assets}`; Update supplies tone and only trims/assets. Status/Stop accept no rig/config fields. Replies use `result.kind:"live-status"` and report playing revision, selected devices, actual device rate/buffer, meters, callback load, deadline overruns and estimated latency. Rust privately supplies asset paths and owns child lifetime; EOF closes input.
+
+The selected mono input passes a prepared persistent graph and feeds the first two outputs. Block sizes up to 512 are processed directly; larger backend callbacks are split using fixed scratch arrays. Preparation/asset loading and destruction stay off the callback. A 20 ms startup ramp/crossfade handles graph publication; the control thread retains the prior graph until the callback acknowledges the transition. Failed validation leaves the current graph running. Apply restarts effect tails. Output is capped at ±0.85; nonfinite processing latches silence and a fault. Device stop/rate/buffer changes mute and require restarting. The control status poll closes faulted devices.
+
+All enabled NAM captures must match the device rate; there is no live resampler in this slice. Up to two neural nodes and one IR bound live graph resources. CPU load is measured callback duration / buffer duration, smoothed over callbacks; deadline overruns count this callback's elapsed deadlines, not all driver/device XRuns. Latency is the device's input/output reports plus one buffer and DSP latency, not a physical round-trip measurement.
+
+NAM remains pinned to the official source revision. `cmake/NamRealtime.cmake` makes a build-local copy with exact-match allocation repairs: LSTM hidden states use views, LSTM matmul writes into prepared storage, and gated WaveNet's 1×1 input accepts a strided view. The upstream checkout is untouched. Tests retain the independent scalar LSTM oracle and sequential offline comparisons, and audit real macOS allocator calls on the processing thread. Official fixtures plus generated multilayer LSTM/gated WaveNet fixtures cover persistent state and allocation behavior. Synthetic fixtures establish implementation behavior, not subjective gear quality or hardware performance.
 
 ## Asset schema and cabinet IRs
 
@@ -63,12 +73,12 @@ The helper reads one UTF-8 JSON line (at most 1 MiB and 64 levels of nesting) fr
 ```
 
 ```json
-{"protocolVersion":1,"requestId":"inspect-001","ok":true,"result":{"kind":"engine-info","engineVersion":"0.5.0","backend":"JUCE","capabilities":["device-enumeration","rig-validation","offline-render","cabinet-ir","neural-amp"]}}
+{"protocolVersion":1,"requestId":"inspect-001","ok":true,"result":{"kind":"engine-info","engineVersion":"0.6.0","backend":"JUCE","capabilities":["device-enumeration","rig-validation","offline-render","cabinet-ir","neural-amp","live-guitar"]}}
 ```
 
 Commands:
 
-- `get_engine_info` reports engine version 0.5.0 and implemented capabilities.
+- `get_engine_info` reports engine version 0.6.0 and implemented capabilities.
 - `inspect_asset` validates a hash-addressed internal asset descriptor and reports its measured IR format or supported NAM architecture/model rate before library installation.
 - `get_audio_devices` returns `{kind:"audio-devices", devices:[{id,name,kind,backend,isDefault}]}`. `kind` is `input` or `output`. IDs identify this enumeration result; they are not persistent hardware identifiers. Empty inventories are legitimate. No sample rates, buffer sizes, latency measurements, or routing state are invented.
 - `validate_tone_spec` requires a `tone` following `core/tone/types.ts`. It returns `{kind:"rig-valid",toneId,revision,nodeCount,activeNodeCount}`. This confirms schema/catalog validity without rendering audio.

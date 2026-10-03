@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.toney.desktop.engine</string>
+  <key>CFBundleName</key><string>Toney</string>
+  <key>NSMicrophoneUsageDescription</key><string>Toney uses your selected audio interface input to process live guitar locally when you start monitoring.</string>
+</dict></plist>

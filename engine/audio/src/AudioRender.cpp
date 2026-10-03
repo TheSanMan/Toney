@@ -52,6 +52,6 @@ juce::var renderAudio(const juce::var& tone, const juce::var& render)
     return makeObject({{"kind", "audio-render"}, {"toneId", validation["toneId"]}, {"revision", validation["revision"]},
                        {"sampleRate", source.sampleRate}, {"channels", channels}, {"inputFrames", inputFrames},
                        {"outputFrames", outputFrames}, {"peak", rawPeak * gain},
-                       {"attenuationDb", gain < 1 ? 20.0 * std::log10(gain) : 0.0}, {"engineVersion", "0.5.0"}});
+                       {"attenuationDb", gain < 1 ? 20.0 * std::log10(gain) : 0.0}, {"engineVersion", "0.6.0"}});
 }
 }

@@ -69,9 +69,9 @@ juce::var handleRequest(const juce::String& json)
             throw ControlError("INVALID_REQUEST", "render is only accepted by render_audio.");
         juce::var result;
         if (command == "get_engine_info")
-            result = makeObject({{"kind", "engine-info"}, {"engineVersion", "0.5.0"},
+            result = makeObject({{"kind", "engine-info"}, {"engineVersion", "0.6.0"},
                                  {"backend", "JUCE"},
-                                 {"capabilities", juce::Array<juce::var>{"device-enumeration", "rig-validation", "offline-render", "cabinet-ir", "neural-amp"}}});
+                                 {"capabilities", juce::Array<juce::var>{"device-enumeration", "rig-validation", "offline-render", "cabinet-ir", "neural-amp", "live-guitar"}}});
         else if (command == "get_audio_devices")
             result = enumerateDevices();
         else if (command == "validate_tone_spec")
