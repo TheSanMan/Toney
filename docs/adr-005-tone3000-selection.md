@@ -8,17 +8,17 @@ Use TONE3000's hosted OAuth `select_tone` flow to browse and audition compatible
 
 The native layer generates PKCE S256 and a random state, opens the system browser, and accepts the `toney://tone3000/callback` deep link only for the current unexpired selection. Codes are single use. The macOS URL scheme is registered through Tauri's deep-link bundle configuration; callbacks are handled directly through the native `RunEvent::Opened` event. The plugin's default runtime emitter is not initialized because it broadcasts callback URLs to webviews. Tokens stay in native process memory for this checkpoint; users reconnect after restarting. Credentials, codes, verifiers, and authenticated download URLs never enter the frontend, diagnostic exports, presets, or the local asset library.
 
-Amp selection restricts gear to `amp`, format to `nam`, and architecture to A1. Cabinet selection restricts gear to `cab` and format to `ir`. Toney's existing engine validation remains authoritative: catalog eligibility does not guarantee that every capture passes the supported file format and architecture checks. A2 and NAM pedal processing require separate engine work.
+Amp selection restricts gear to `amp`, format to `nam`, and architecture to A1. Cabinet selection restricts gear to `cab` and format to `ir`. Toney's existing engine validation remains authoritative: catalog eligibility does not guarantee that every capture passes the supported file format and architecture checks. Pedal selection uses gear `pedal`, format `nam` and A1, targeting the Drive block. Classic pedal captures now use independent native state before amp/cab; A2 and parametric captures still require separate engine work.
 
 After a user selects a tone, Toney loads only that tone's metadata and a bounded model list. The user chooses a variant and explicitly downloads it. No catalog mirroring, bulk download, or redistributed starter captures are part of this checkpoint.
 
 ## Asset boundary
 
-The native client validates the server-provided download URL, bounds response size and time, and passes downloaded bytes through the same helper inspection and content-addressed installation as local imports. NAM is limited to 32 MiB; IR to 8 MiB. Bearer credentials are restricted to the official API origin. An unsupported delivery origin fails with an actionable error; it cannot cause credentials to be forwarded to an arbitrary host.
+The native client validates the server-provided download URL, bounds response size and time, and passes downloaded bytes through the same helper inspection and content-addressed installation as local imports. NAM is limited to 32 MiB; IR to 8 MiB. Bearer credentials are restricted to the official API origin. The initial file URL must be on the official API origin. After the reported redirect failure, file requests may follow at most three HTTPS redirects delegated by that endpoint. Each delegated hostname is resolved, every returned address must be public, and the validated addresses are pinned for that connection. IP literals, private/reserved networks, credentials in URLs, custom ports and fragments are rejected. Account credentials are never attached to storage requests and are not reattached after delegation, even if a later redirect returns to the API. API JSON requests continue to reject redirects. Redirect locations never enter errors or diagnostics.
 
 Optional source metadata belongs to the durable asset descriptor, alongside inspected metadata. It records provider, tone/model IDs, tone title, creator, license, and source URL. ToneSpec continues to contain only content hash, kind, and a safe display name. Existing local assets and presets remain readable. Reimporting identical bytes preserves credit already associated with those bytes.
 
-Downloads populate the library. Applying a model remains an explicit amp/cabinet selection after download, so a browser sign-in cannot silently replace a rig edited during that sign-in.
+Downloads populate the library. Applying a model remains an explicit pedal/amp/cabinet selection after download, so a browser sign-in cannot silently replace a rig edited during that sign-in.
 
 ## Verification and traceability
 
@@ -29,6 +29,7 @@ A live acceptance test requires the user to sign in and select a tone. Transport
 ## References
 
 - [TONE3000 API and design requirements](https://www.tone3000.com/api)
+- [Official reference client](https://github.com/tone-3000/api)
 - [TONE3000 API terms](https://www.tone3000.com/api/terms)
 - [Tauri deep-link configuration](https://v2.tauri.app/plugin/deep-linking/)
 

@@ -1,5 +1,15 @@
 # Download investigation and tone quality roadmap
 
+## Current implementation — checkpoint 008
+
+The user's native screenshot confirmed `TONE3000_REDIRECT_UNSUPPORTED` after successful account selection and variant loading. The file transport now follows bounded HTTPS delegation, strips bearer credentials for storage hops, rejects private/reserved DNS answers and pins resolved addresses. This fixes the reported rejection path; a live retry of that capture remains required.
+
+Classic NAM drive/boost/fuzz captures now run in the Drive block, independently before NAM amp and cabinet IR. Hosted pedal browsing and explicit selection are available. A2 and parametric captures remain outside this engine version.
+
+ChatGPT is now the default desktop provider: native plan authorization, current account model discovery, streaming structured interpretation and engineering explanation. It prefers discovered GPT-6 Astra, then GPT-6.1 Sol; explicit choices persist while available. Protected native files hold credentials. The current account information available in Codex reports Plus; plan inference therefore cannot be promised unlimited. Toney discovers its own signed-in account rather than assuming Codex's model catalog. Live OAuth and inference acceptance remain pending user consent/testing.
+
+The sections below preserve the investigation baseline and proposed route. Next work is user listening feedback and live acceptance, realistic licensed DI examples, then a gear-aware bounded tool loop and improved algorithmic effects. See [checkpoint log](checkpoints.md) and [ADR 006](adr-006-chatgpt-agent.md).
+
 Investigation date: 2026-10-03. Reviewed published revision: `3f6c276`.
 This is an investigation and proposed implementation route; the features below
 have not been implemented or accepted merely by documenting them.
