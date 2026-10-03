@@ -127,8 +127,8 @@ fn check_base(version: u32, id: &str) -> Result<(), NativeError> {
     }
     Ok(())
 }
-fn random() -> Result<String, NativeError> {
-    let mut bytes = [0u8; 32];
+fn random_bytes<const N: usize>() -> Result<[u8; N], NativeError> {
+    let mut bytes = [0u8; N];
     getrandom::getrandom(&mut bytes).map_err(|_| {
         failure(
             "CHATGPT_RANDOM_FAILED",
@@ -136,7 +136,65 @@ fn random() -> Result<String, NativeError> {
             None,
         )
     })?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
+    Ok(bytes)
+}
+fn random() -> Result<String, NativeError> {
+    Ok(URL_SAFE_NO_PAD.encode(random_bytes::<32>()?))
+}
+fn uuid_host_id(mut bytes: [u8; 16]) -> String {
+    // UUIDv4 version and RFC 9562 variant; the remaining bits identify this host.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "urn:uuid:{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
+}
+fn valid_host_id(id: &str) -> bool {
+    let Some(uuid) = id.strip_prefix("urn:uuid:") else {
+        return false;
+    };
+    let bytes = uuid.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b' | b'A' | b'B')
+}
+fn load_host_id(directory: &Path) -> Result<String, NativeError> {
+    let path = directory.join("host.json");
+    let id = match read::<String>(&path)? {
+        Some(id) if valid_host_id(&id) => return Ok(id),
+        Some(id) => {
+            // Checkpoint008 used a random but unsupported `toney:` identifier.
+            // Only migrate that known format. Derive the replacement from its
+            // original seed so an interrupted retry keeps the same host identity.
+            let seed = id
+                .strip_prefix("toney:")
+                .and_then(|seed| URL_SAFE_NO_PAD.decode(seed).ok())
+                .filter(|seed| seed.len() == 32)
+                .ok_or_else(|| {
+                    failure("CHATGPT_STORAGE_INVALID", "Invalid host identity.", None)
+                })?;
+            let digest = Sha256::digest(seed);
+            let mut bytes = [0u8; 16];
+            bytes.copy_from_slice(&digest[..16]);
+            uuid_host_id(bytes)
+        }
+        None => uuid_host_id(random_bytes::<16>()?),
+    };
+    save(&path, &id)?;
+    Ok(id)
 }
 fn directory(app: &tauri::AppHandle) -> Result<PathBuf, NativeError> {
     let path = app
@@ -281,21 +339,7 @@ async fn initialize(app: &tauri::AppHandle) -> Result<(), NativeError> {
         return Ok(());
     }
     let directory = directory(app)?;
-    s.host_id = match read::<String>(&directory.join("host.json"))? {
-        Some(id) if text(&id, 200) => id,
-        Some(_) => {
-            return Err(failure(
-                "CHATGPT_STORAGE_INVALID",
-                "Invalid host identity.",
-                None,
-            ))
-        }
-        None => {
-            let id = format!("toney:{}", random()?);
-            save(&directory.join("host.json"), &id)?;
-            id
-        }
-    };
+    s.host_id = load_host_id(&directory)?;
     s.registration = read(&directory.join("registration.json"))?;
     s.credentials = read(&directory.join("credentials.json"))?;
     if let Some(c) = &s.credentials {
@@ -1481,8 +1525,12 @@ mod tests {
     #[test]
     fn authorize_uses_bound_loopback_pkce_and_public_dynamic_registration() {
         let p = pending();
-        let u = build_authorize(&p, "host-id");
+        let directory = tempfile::tempdir().unwrap();
+        let host = load_host_id(directory.path()).unwrap();
+        let u = build_authorize(&p, &host);
         let fields: std::collections::HashMap<_, _> = u.query_pairs().collect();
+        assert_eq!(fields["ext_agent_host_id"], host);
+        assert!(valid_host_id(&fields["ext_agent_host_id"]));
         assert_eq!(fields["client_id"], "dynamic_agent_client");
         assert_eq!(fields["agent_name_hint"], "Toney");
         assert_eq!(fields["redirect_uri"], p.redirect);
@@ -1490,6 +1538,52 @@ mod tests {
         assert_eq!(fields["code_challenge_method"], "S256");
         assert!(!fields.contains_key("client_secret"));
         assert!(permitted(&fields["scope"]));
+    }
+    #[test]
+    fn host_identity_is_uuid_v4_and_survives_restarts() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = load_host_id(directory.path()).unwrap();
+        assert!(valid_host_id(&first));
+        assert_eq!(first.len(), 45);
+        assert_eq!(load_host_id(directory.path()).unwrap(), first);
+        let other = tempfile::tempdir().unwrap();
+        assert_ne!(load_host_id(other.path()).unwrap(), first);
+        for bad in [
+            "host-id",
+            "urn:uuid:00000000-0000-0000-0000-000000000000",
+            "urn:uuid:00000000-0000-4000-7000-000000000000",
+            "urn:uuid:00000000-0000-4000-8000-00000000000z",
+            "urn:uuid:é",
+            "toney:bad",
+        ] {
+            assert!(!valid_host_id(bad));
+        }
+    }
+    #[test]
+    fn legacy_host_identity_migrates_once_without_changing_account_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let host_path = directory.path().join("host.json");
+        let account_path = directory.path().join("registration.json");
+        let legacy = format!("toney:{}", URL_SAFE_NO_PAD.encode([42u8; 32]));
+        save(&host_path, &legacy).unwrap();
+        save(&account_path, &json!({"clientId":"saved-registration"})).unwrap();
+        let account_before = std::fs::read(&account_path).unwrap();
+        let migrated = load_host_id(directory.path()).unwrap();
+        assert!(valid_host_id(&migrated));
+        assert_eq!(read::<String>(&host_path).unwrap(), Some(migrated.clone()));
+        assert_eq!(load_host_id(directory.path()).unwrap(), migrated);
+        assert_eq!(std::fs::read(&account_path).unwrap(), account_before);
+        save(&host_path, &legacy).unwrap();
+        assert_eq!(load_host_id(directory.path()).unwrap(), migrated);
+        save(&host_path, &"unknown-malformed-host").unwrap();
+        assert_eq!(
+            load_host_id(directory.path()).unwrap_err().code,
+            "CHATGPT_STORAGE_INVALID"
+        );
+        assert_eq!(
+            read::<String>(&host_path).unwrap().unwrap(),
+            "unknown-malformed-host"
+        );
     }
     #[test]
     fn jwt_signature_requires_trusted_key_payload_and_allowed_algorithm() {

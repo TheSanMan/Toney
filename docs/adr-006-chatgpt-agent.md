@@ -12,7 +12,7 @@ The frontend receives account display information, available model slugs/names, 
 
 - Bind `127.0.0.1` on an available port before opening the system browser. Use `/auth/callback` throughout, with the identical redirect URI in each code exchange.
 - Fresh cryptographic state, nonce and PKCE S256 verifier are bound to each attempt; mismatches and duplicate callback parameters cannot consume it. The listener expires after ten minutes and stops after cancellation.
-- First registration uses `dynamic_agent_client`, `agent_name_hint=Toney`, and a stable installation host identifier. The issued callback client ID is used for code exchange. Returning sign-ins reuse the saved issued registration and verify the original subject.
+- First registration uses `dynamic_agent_client`, `agent_name_hint=Toney`, and a stable `urn:uuid:<UUIDv4>` installation host identifier. On upgrade, the unsupported checkpoint008 `toney:` seed is atomically migrated to a deterministic UUIDv4 URI; valid saved UUID IDs are reused and account records are preserved. The issued callback client ID is used for code exchange. Returning sign-ins reuse the saved issued registration and verify the original subject.
 - Verify the ID token signature using OpenAI's published JWKS and ring's RS256 verification. Validate issuer, audience, expiry, issue time, optional not-before, authorized party for multiple audiences and original nonce. Reject unsigned and symmetric JWT algorithms.
 - Require granted `openid`, `resource.invoke` and `chatgpt.tokens.use.direct` scopes before inference. Identity-only sign-in cannot enable the agent.
 - Store host identity, registration mapping and credentials separately under the application data directory's `chatgpt` folder. The directory is `0700` and atomic credential files are `0600` on Unix. Refuse symlink files and unprotected stored records. Files are outside the repository and never part of exports or diagnostics. This follows the official protected-file route; it does not currently use macOS Keychain. The prototype supports one saved account/workspace registration at a time.
@@ -31,6 +31,7 @@ Automated coverage includes bound OAuth URLs, callback state/client identity, JW
 
 ## Official references
 
+- [Accepted host ID formats](https://developers.openai.com/siwc/token-sharing-open-source)
 - [Registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
 - [Accounts and sessions](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)
 - [Models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
