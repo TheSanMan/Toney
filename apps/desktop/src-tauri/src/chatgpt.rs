@@ -1269,6 +1269,33 @@ fn response_body(r: &InterpretRequest) -> Value {
         "input":[{"role":"user","content":serde_json::to_string(&json!({"prompt":r.prompt,"baseline":r.baseline,"mode":if r.current_tone.is_some(){"refine"}else{"generate"},"currentTone":r.current_tone})).unwrap()}],
         "text":{"format":{"type":"json_schema","name":"toney_intent","strict":true,"schema":intent_schema()}}})
 }
+fn inference_request(
+    client: &reqwest::Client,
+    access_token: &str,
+    request: &InterpretRequest,
+) -> reqwest::RequestBuilder {
+    client
+        .post(format!("{RESOURCE}/responses"))
+        .bearer_auth(access_token)
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .json(&response_body(request))
+}
+fn permits_event_stream(headers: &reqwest::header::HeaderMap) -> bool {
+    // The live plan-usage route can return completed SSE without Content-Type.
+    // Missing metadata is allowed, but the body must still pass the bounded SSE
+    // parser, terminal completion check and strict tone schema below.
+    match headers.get(reqwest::header::CONTENT_TYPE) {
+        None => true,
+        Some(value) => value.to_str().is_ok_and(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("text/event-stream")
+        }),
+    }
+}
 #[derive(Default)]
 struct EventStream {
     pending: Vec<u8>,
@@ -1409,10 +1436,7 @@ pub async fn native_chatgpt_interpret(
             ));
         }
     }
-    let mut response = client(&r.request_id)?
-        .post(format!("{RESOURCE}/responses"))
-        .bearer_auth(&c.access_token)
-        .json(&response_body(&r))
+    let mut response = inference_request(&client(&r.request_id)?, &c.access_token, &r)
         .send()
         .await
         .map_err(|_| {
@@ -1423,12 +1447,7 @@ pub async fn native_chatgpt_interpret(
             )
         })?;
     http_status(response.status(), &r.request_id)?;
-    if !response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|s| s.starts_with("text/event-stream"))
-    {
+    if !permits_event_stream(response.headers()) {
         return Err(err(
             "CHATGPT_STREAM_INVALID",
             "ChatGPT did not return the required event stream.",
@@ -1673,6 +1692,21 @@ mod tests {
         assert_eq!(b["input"][0]["role"], "user");
         assert!(b.get("max_output_tokens").is_none());
         assert!(b.get("temperature").is_none());
+        let request = inference_request(&reqwest::Client::new(), "test-token", &r)
+            .build()
+            .unwrap();
+        assert_eq!(
+            request.headers()[reqwest::header::ACCEPT],
+            "text/event-stream"
+        );
+        assert_eq!(
+            request.headers()[reqwest::header::CONTENT_TYPE],
+            "application/json"
+        );
+        assert_eq!(
+            request.url().as_str(),
+            "https://api.openai.com/v1/responses"
+        );
         let mut v=serde_json::to_value(json!({"protocolVersion":1,"requestId":"request","model":"catalog-model","prompt":"warm","baseline":baseline()})).unwrap();
         v["url"] = json!("https://other.example");
         assert!(interpret_request(v).is_err());
@@ -1695,6 +1729,148 @@ mod tests {
         assert!(EventStream::default()
             .feed(b"data: {\"type\":\"response.failed\"}\n\n", "request")
             .is_err());
+    }
+    #[test]
+    fn stream_media_type_accepts_missing_header_but_not_json_or_html() {
+        use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+        let mut headers = HeaderMap::new();
+        assert!(permits_event_stream(&headers));
+        for value in ["text/event-stream", "Text/Event-Stream; charset=utf-8"] {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static(value));
+            assert!(permits_event_stream(&headers));
+        }
+        for value in [
+            "application/json",
+            "text/html",
+            "text/event-stream-invalid",
+            "",
+        ] {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static(value));
+            assert!(!permits_event_stream(&headers));
+        }
+        let mut non_stream = EventStream::default();
+        non_stream
+            .feed(
+                b"{\"status\":\"completed\",\"output_text\":\"not SSE\"}\n",
+                "request",
+            )
+            .unwrap();
+        assert_eq!(
+            non_stream.finish("request").unwrap_err().code,
+            "CHATGPT_STREAM_INTERRUPTED"
+        );
+    }
+    #[test]
+    fn http_stream_without_content_type_still_requires_completed_valid_intent() {
+        tauri::async_runtime::block_on(async {
+            let interpretation = json!({"intent":baseline(),"changedPaths":[],"warnings":[],"issues":[],"explanation":"Preserve the current controls."});
+            let delta = json!({"type":"response.output_text.delta","delta":serde_json::to_string(&interpretation).unwrap()});
+            let body = format!("data: {delta}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\"}}}}\n\n");
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let mut chunk = [0u8; 1024];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    request.extend_from_slice(&chunk[..count]);
+                    assert!(request.len() <= 4096);
+                }
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            });
+            let mut response = reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap()
+                .get(format!("http://{address}"))
+                .send()
+                .await
+                .unwrap();
+            assert!(response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .is_none());
+            http_status(response.status(), "request").unwrap();
+            assert!(permits_event_stream(response.headers()));
+            let mut stream = EventStream::default();
+            while let Some(chunk) = response.chunk().await.unwrap() {
+                stream.feed(&chunk, "request").unwrap();
+            }
+            assert_eq!(stream.finish("request").unwrap(), interpretation);
+            server.await.unwrap();
+        });
+    }
+    #[test]
+    #[ignore = "opt-in live account check; set TONEY_CHATGPT_ACCEPTANCE_CREDENTIALS"]
+    fn live_account_completes_production_tone_interpretation() {
+        tauri::async_runtime::block_on(async {
+            let path = std::env::var_os("TONEY_CHATGPT_ACCEPTANCE_CREDENTIALS")
+                .expect("Set the protected Toney credentials file path for this opt-in test.");
+            let c = read::<Credentials>(Path::new(&path))
+                .unwrap()
+                .expect("Sign in through Toney first.");
+            assert!(valid_credentials(&c));
+            assert!(
+                c.expires_at > now() + 30,
+                "Renew through Toney before this test; no external refresh is performed."
+            );
+            let client = client("live-tone-acceptance").unwrap();
+            let catalog = bounded_json(
+                client
+                    .get(format!("{RESOURCE}/models"))
+                    .bearer_auth(&c.access_token)
+                    .send()
+                    .await
+                    .unwrap(),
+                "live-tone-acceptance",
+            )
+            .await
+            .unwrap();
+            let models = parse_models(&catalog, "live-tone-acceptance").unwrap();
+            let model = ["gpt-6-astra", "gpt-6.1-sol"]
+                .iter()
+                .find_map(|slug| models.iter().find(|m| m.slug == *slug))
+                .or_else(|| models.first())
+                .expect("No discovered models available.");
+            let request = InterpretRequest {
+                protocol_version: 1,
+                request_id: "live-tone-acceptance".into(),
+                model: model.slug.clone(),
+                prompt: "Warm edge-of-breakup blues with clear chords and strong pick attack."
+                    .into(),
+                baseline: baseline(),
+                current_tone: None,
+            };
+            let mut response = inference_request(&client, &c.access_token, &request)
+                .send()
+                .await
+                .unwrap();
+            http_status(response.status(), &request.request_id).unwrap();
+            assert!(permits_event_stream(response.headers()));
+            let has_content_type = response
+                .headers()
+                .contains_key(reqwest::header::CONTENT_TYPE);
+            let mut stream = EventStream::default();
+            while let Some(chunk) = response.chunk().await.unwrap() {
+                stream.feed(&chunk, &request.request_id).unwrap();
+            }
+            let interpretation = stream.finish(&request.request_id).unwrap();
+            // Only transport/schema evidence is printed; no account or token data.
+            println!("Live model {}: completed validated tone interpretation; Content-Type present: {}; changed paths: {}",
+                model.slug, has_content_type, interpretation["changedPaths"].as_array().unwrap().len());
+        });
     }
     #[test]
     fn token_response_requires_granted_plan_scope_not_identity_only() {
