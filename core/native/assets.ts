@@ -4,7 +4,10 @@ import { NativeError } from './protocol';
 export type NativeAssetInfo =
   | { kind: 'asset-info'; id: string; assetKind: 'ir'; sampleRate: number; channels: 1 | 2; frames: number }
   | { kind: 'asset-info'; id: string; assetKind: 'nam'; sampleRate: number; channels: 1; architecture: 'WaveNet' | 'LSTM'; modelVersion: string };
-export interface NativeAssetDescriptor { asset: AssetRef; info: NativeAssetInfo }
+export interface NativeAssetSource {
+  provider: 'tone3000'; toneId: number; modelId: number; toneName: string; creator: string; license: string; url: string;
+}
+export interface NativeAssetDescriptor { asset: AssetRef; info: NativeAssetInfo; source?: NativeAssetSource }
 export interface NativeAssetDiagnostic { id: string; code: string; message: string }
 export interface NativeAssetInventory { assets: NativeAssetDescriptor[]; diagnostics: NativeAssetDiagnostic[] }
 export interface NativeAssetListRequest { protocolVersion: 1; requestId: string }
@@ -15,10 +18,10 @@ export const ASSET_SIZE_LIMITS: Record<AssetRef['kind'], number> = { ir: 8 * 102
 function invalid(requestId: string): never {
   throw new NativeError('INVALID_NATIVE_RESPONSE', 'The native asset library returned invalid or mismatched metadata.', requestId);
 }
-function record(value: unknown, requestId: string, fields: string[]): Record<string, unknown> {
+function record(value: unknown, requestId: string, fields: string[], optional: string[] = []): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return invalid(requestId);
   const input = value as Record<string, unknown>;
-  if (Object.keys(input).some((field) => !fields.includes(field)) || fields.some((field) => !Object.hasOwn(input, field))) return invalid(requestId);
+  if (Object.keys(input).some((field) => !fields.includes(field) && !optional.includes(field)) || fields.some((field) => !Object.hasOwn(input, field))) return invalid(requestId);
   return input;
 }
 function text(value: unknown, maximum: number): value is string {
@@ -53,16 +56,35 @@ export function validateNativeAssetInfo(input: unknown, asset: AssetRef, request
   return { kind: 'asset-info', id: asset.id, assetKind: 'nam', sampleRate: info.sampleRate, channels: 1, architecture: info.architecture, modelVersion: info.modelVersion };
 }
 
-function descriptor(input: unknown, requestId: string): NativeAssetDescriptor {
-  const value = record(input, requestId, ['asset', 'info']);
+export function validateTone3000SourceUrl(input: unknown, requestId: string): string {
+  if (!text(input, 2048) || [...input].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return invalid(requestId);
+  let url: URL;
+  try { url = new URL(input); } catch { return invalid(requestId); }
+  if (url.protocol !== 'https:' || !['tone3000.com', 'www.tone3000.com'].includes(url.hostname)
+    || url.username || url.password || url.port || url.search || url.hash || input.trim() !== input) return invalid(requestId);
+  return input;
+}
+
+export function validateNativeAssetSource(input: unknown, requestId: string): NativeAssetSource {
+  const source = record(input, requestId, ['provider', 'toneId', 'modelId', 'toneName', 'creator', 'license', 'url']);
+  const id = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+  if (source.provider !== 'tone3000' || !id(source.toneId) || !id(source.modelId)
+    || !text(source.toneName, 200) || !text(source.creator, 200) || !text(source.license, 200)) return invalid(requestId);
+  return { provider: 'tone3000', toneId: source.toneId, modelId: source.modelId, toneName: source.toneName,
+    creator: source.creator, license: source.license, url: validateTone3000SourceUrl(source.url, requestId) };
+}
+
+export function validateNativeAssetDescriptor(input: unknown, requestId: string): NativeAssetDescriptor {
+  const value = record(input, requestId, ['asset', 'info'], ['source']);
   let asset: AssetRef;
   try { asset = validateAssetRef(value.asset); }
   catch { return invalid(requestId); }
-  return { asset, info: validateNativeAssetInfo(value.info, asset, requestId) };
+  return { asset, info: validateNativeAssetInfo(value.info, asset, requestId),
+    ...(Object.hasOwn(value, 'source') ? { source: validateNativeAssetSource(value.source, requestId) } : {}) };
 }
 
 export function validateNativeAssetImportResponse(request: NativeAssetImportRequest, expectedId: string, input: unknown): NativeAssetDescriptor {
-  const output = record(input, request.requestId, ['response', 'asset', 'info']);
+  const output = record(input, request.requestId, ['response', 'asset', 'info'], ['source']);
   if (typeof output.response !== 'object' || output.response === null || Array.isArray(output.response)) return invalid(request.requestId);
   const response = output.response as Record<string, unknown>;
   if (response.protocolVersion !== 1 || response.requestId !== request.requestId || typeof response.ok !== 'boolean') return invalid(request.requestId);
@@ -72,7 +94,8 @@ export function validateNativeAssetImportResponse(request: NativeAssetImportRequ
     throw new NativeError(error.code, error.message, request.requestId);
   }
   record(response, request.requestId, ['protocolVersion', 'requestId', 'ok', 'result']);
-  const saved = descriptor({ asset: output.asset, info: output.info }, request.requestId);
+  const saved = validateNativeAssetDescriptor({ asset: output.asset, info: output.info,
+    ...(Object.hasOwn(output, 'source') ? { source: output.source } : {}) }, request.requestId);
   // Same-content imports keep the original library name; only bytes and kind determine identity.
   if (saved.asset.id !== expectedId || saved.asset.kind !== request.kind) return invalid(request.requestId);
   const inspected = validateNativeAssetInfo(response.result, saved.asset, request.requestId);
@@ -86,7 +109,7 @@ export function validateNativeAssetListResponse(request: NativeAssetListRequest,
     || output.assets.length > 128 || !Array.isArray(output.diagnostics) || output.diagnostics.length > 129) return invalid(request.requestId);
   const ids = new Set<string>();
   const assets = output.assets.map((entry: unknown) => {
-    const item = descriptor(entry, request.requestId);
+    const item = validateNativeAssetDescriptor(entry, request.requestId);
     if (ids.has(item.asset.id)) return invalid(request.requestId);
     ids.add(item.asset.id);
     return item;
