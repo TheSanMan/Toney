@@ -1,3 +1,5 @@
+mod assets;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -39,6 +41,8 @@ struct EngineRequest {
     tone: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     render: Option<RenderPaths>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    asset: Option<assets::TrustedAssetPath>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -46,6 +50,8 @@ struct EngineRequest {
 struct RenderPaths {
     input_path: String,
     output_path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    assets: Vec<assets::TrustedAssetPath>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -55,16 +61,21 @@ enum EngineCommand {
     GetAudioDevices,
     ValidateToneSpec,
     RenderAudio,
+    InspectAsset,
 }
 
 fn validate_engine_request(value: Value) -> Result<EngineRequest, NativeError> {
     let id = value.get("requestId").and_then(Value::as_str);
-    if value.get("command").and_then(Value::as_str) == Some("render_audio")
-        || value.get("render").is_some()
+    if matches!(
+        value.get("command").and_then(Value::as_str),
+        Some("render_audio" | "inspect_asset")
+    ) || value.get("render").is_some()
+        || value.get("asset").is_some()
+        || value.get("path").is_some()
     {
         return Err(failure(
             "ENGINE_REQUEST_FORBIDDEN",
-            "Audio rendering is available only through the dedicated native render command.",
+            "Rendering and asset inspection are available only through dedicated native commands.",
             id,
         ));
     }
@@ -142,6 +153,7 @@ fn validate_engine_response(bytes: &[u8], request: &EngineRequest) -> Result<Val
                 EngineCommand::GetAudioDevices => "audio-devices",
                 EngineCommand::ValidateToneSpec => "rig-valid",
                 EngineCommand::RenderAudio => "audio-render",
+                EngineCommand::InspectAsset => "asset-info",
             };
             if value.pointer("/result/kind").and_then(Value::as_str) != Some(expected) {
                 return Err(failure(
@@ -184,8 +196,8 @@ async fn native_engine_request(
     .await
 }
 
-async fn run_engine_request(
-    app: tauri::AppHandle,
+async fn run_engine_request<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     request: EngineRequest,
     deadline: Duration,
 ) -> Result<Value, NativeError> {
@@ -410,10 +422,23 @@ async fn native_render_audio(
     let request = validate_render_request(request)?;
     let request_id = request.request_id;
     let id = Some(request_id.as_str());
-    let directory = tauri::async_runtime::spawn_blocking(move || stage_render(&request.data))
-        .await
-        .map_err(|error| failure("RENDER_STAGING_FAILED", error.to_string(), id))?
-        .map_err(|error| failure("RENDER_STAGING_FAILED", error.to_string(), id))?;
+    let library = assets::library_path(&app)?;
+    let staged_tone = request.tone.clone();
+    let staging_id = request_id.clone();
+    let (directory, resolved_assets) = tauri::async_runtime::spawn_blocking(move || {
+        let directory = stage_render(&request.data).map_err(|error| {
+            failure(
+                "RENDER_STAGING_FAILED",
+                error.to_string(),
+                Some(&staging_id),
+            )
+        })?;
+        let resolved =
+            assets::stage_tone_assets(&library, &staged_tone, directory.path(), &staging_id)?;
+        Ok::<_, NativeError>((directory, resolved))
+    })
+    .await
+    .map_err(|error| failure("RENDER_STAGING_FAILED", error.to_string(), id))??;
     let engine_request = EngineRequest {
         protocol_version: 1,
         request_id: request_id.clone(),
@@ -430,7 +455,9 @@ async fn native_render_audio(
                 .join("output.wav")
                 .to_string_lossy()
                 .into_owned(),
+            assets: resolved_assets,
         }),
+        asset: None,
     };
     let response = run_engine_request(app, engine_request, Duration::from_secs(60)).await?;
     if response.get("ok").and_then(Value::as_bool) == Some(false) {
@@ -655,6 +682,8 @@ pub fn run() {
             native_engine_request,
             native_export_file,
             native_render_audio,
+            assets::native_import_asset,
+            assets::native_list_assets,
             native_ollama_chat
         ])
         .run(tauri::generate_context!())
@@ -775,7 +804,7 @@ mod tests {
         json!({"protocolVersion":1,"requestId":"render-123","tone":{"schemaVersion":1},"data":[82,73,70,70]})
     }
 
-    fn test_wav() -> Vec<u8> {
+    pub(super) fn test_wav() -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
         bytes.extend_from_slice(&36u32.to_le_bytes());
@@ -839,6 +868,9 @@ mod tests {
             json!({"protocolVersion":1,"requestId":"render-123","command":"render_audio","tone":{}}),
             json!({"protocolVersion":1,"requestId":"render-123","command":"get_engine_info","render":{"inputPath":"/private/file.wav","outputPath":"/private/output.wav"}}),
             json!({"protocolVersion":1,"requestId":"render-123","command":"get_engine_info","render":null}),
+            json!({"protocolVersion":1,"requestId":"asset-123","command":"inspect_asset","asset":{"id":"0".repeat(64),"kind":"ir","path":"/private/file.wav"}}),
+            json!({"protocolVersion":1,"requestId":"asset-123","command":"get_engine_info","asset":null}),
+            json!({"protocolVersion":1,"requestId":"asset-123","command":"get_engine_info","path":"/private/file.wav"}),
         ] {
             assert_eq!(
                 validate_engine_request(value).unwrap_err().code,
