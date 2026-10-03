@@ -204,3 +204,23 @@ Verification: all **12 focused ChatGPT Rust tests** pass; all-targets Clippy wit
 Anonymous command-line authorization probes returned non-JSON HTTP403 for both formats and cannot establish OAuth acceptance. No user credentials or account consent were used in those probes. Complete live browser sign-in remains a user acceptance step.
 
 Checkpoint pause: quit the old Toney instance, reopen the rebuilt `apps/desktop/src-tauri/target/debug/bundle/macos/Toney.app`, and click **Continue with ChatGPT**. The saved invalid host ID repairs automatically; no manual app-data deletion is needed. Record any subsequent provider error separately from this corrected request field.
+
+
+## 008.2 — Live ChatGPT event-stream compatibility
+
+The user reported `INTENT_PROVIDER_FAILED: ChatGPT did not return the required event stream`, trace `trace_878cb96e-1e41-4fc6-bd9e-0f675ebc4623`. The failure occurred after native authorization and account-model discovery.
+
+Diagnosis and correction:
+
+- Using Toney's existing authorized account, a bounded official API probe confirmed `GET /v1/models` HTTP200 with the account catalog. A discovered GPT-6 Astra `POST /v1/responses` returned HTTP200 and completed SSE, **without a Content-Type header**. The old failure came from Toney's strict header gate, before reading valid events.
+- Production requests now explicitly send `Accept: text/event-stream`. Missing Content-Type is tolerated; supplied media types must match `text/event-stream` case-insensitively, with optional parameters. Explicit JSON/HTML and prefix lookalikes remain rejected.
+- Every body still passes bounded incremental SSE parsing, terminal `response.completed`, JSON decoding and the strict tone schema before changing the rig. Accepting missing metadata does not admit complete JSON responses, interrupted streams or unvalidated model text.
+- Added a real local HTTP regression server returning completed SSE without media metadata, media-type rejection checks, outgoing Accept/Content-Type checks, and an opt-in ignored live-account acceptance test. It loads owner-only credentials only from an explicitly supplied path, uses public endpoints, does not refresh the session externally, and logs no credentials or account details.
+
+Verification:
+
+- **14 focused ChatGPT tests pass**, plus one opt-in live test excluded from normal CI. All-targets Clippy with warnings denied, Rust formatting and Git whitespace checks pass.
+- The opt-in test was explicitly run with the existing Toney authorization: live catalog discovery selected **gpt-6-astra**, the actual production Rust request completed, and its parser/schema validator accepted a blues tone interpretation with four changed intent paths. The live response again omitted Content-Type. This establishes native authenticated inference beyond fixtures; it does not establish packaged UI playback or account lifecycle behavior.
+- Frontend/audio implementation is unchanged. The macOS app rebuilt successfully with the same tested checkpoint008 frontend and current NAM helper. The bundled native executable matches the final build, and the helper matches the staged helper.
+
+Checkpoint pause: quit the old Toney instance, reopen the rebuilt `apps/desktop/src-tauri/target/debug/bundle/macos/Toney.app`, and retry **Dial in my tone**. Keep the saved ChatGPT sign-in; there is no need to clear app data or repeat consent for this transport correction. Capture any new error with its trace, keeping account tokens private.

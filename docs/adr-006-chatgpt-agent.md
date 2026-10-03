@@ -1,6 +1,6 @@
 # ADR 006: ChatGPT plan inference in the desktop agent
 
-Status: Implemented for personal prototype; live account authorization remains a user acceptance step.
+Status: Implemented for personal prototype; live account catalog and native tone inference verified. Packaged GUI lifecycle acceptance remains.
 
 ## Decision
 
@@ -21,13 +21,13 @@ The frontend receives account display information, available model slugs/names, 
 
 ## Inference
 
-`POST https://api.openai.com/v1/responses` uses `store:false`, `stream:true`, an input array and instructions, with a strict tone interpretation JSON schema. No unsupported system input message, temperature, max-output field or persistent previous-response ID is sent. SSE is parsed incrementally across fragmented UTF-8/network chunks, with bounded response size. Completion, structure and numeric bounds must validate before a rig can change. Provider errors never trigger a silent offline substitution.
+`POST https://api.openai.com/v1/responses` uses `store:false`, `stream:true`, an input array and instructions, with a strict tone interpretation JSON schema. No unsupported system input message, temperature, max-output field or persistent previous-response ID is sent. SSE is parsed incrementally across fragmented UTF-8/network chunks, with bounded response size. Requests explicitly advertise `Accept: text/event-stream`. The live plan-usage route has returned valid SSE without `Content-Type`; Toney accepts missing media metadata while still requiring parsed SSE, terminal completion and strict tone schema. An explicitly incompatible media type is rejected. Completion, structure and numeric bounds must validate before a rig can change. Provider errors never trigger a silent offline substitution.
 
 The request contains the user's description, perceptual baseline and optional current rig descriptor. Guitar audio stays local. The model cannot hear the audition or import ChatGPT conversations/memory. Existing tone compilation remains deterministic; this checkpoint improves interpretation and engineering explanation, not an autonomous gear-selection loop.
 
 ## Validation and acceptance
 
-Automated coverage includes bound OAuth URLs, callback state/client identity, JWT signatures and claim rejection, model visibility/order, granted scopes, protected atomic storage, allowed payload fields, fragmented SSE and failed/incomplete inference. User acceptance requires Continue with ChatGPT, permission consent, successful live catalog/inference, a restart/reconnect, and sign-out. Public preview behavior may change independently of the app.
+Automated coverage includes bound OAuth URLs, callback state/client identity, JWT signatures and claim rejection, model visibility/order, granted scopes, protected atomic storage, allowed payload fields, fragmented SSE and failed/incomplete inference. Live account discovery and a GPT-6 Astra request using the production Rust request/parser completed with valid tone intent on 2026-10-03. The opt-in ignored test `live_account_completes_production_tone_interpretation` reads a protected file path supplied through `TONEY_CHATGPT_ACCEPTANCE_CREDENTIALS`, does not refresh credentials externally, and prints transport/schema evidence only. Normal CI never reads account credentials. User acceptance still includes packaged GUI generation, restart/reconnect and sign-out. Public preview behavior may change independently of the app.
 
 ## Official references
 

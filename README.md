@@ -56,7 +56,7 @@ The default desktop interpretation provider is **ChatGPT · your plan**. Native 
 
 Only the description, perceptual baseline and current rig descriptor go to OpenAI. Guitar audio stays local; this provider cannot hear it or use your ChatGPT conversations/memory. A validated, completed response changes the rig through the existing deterministic compiler and includes an engineering explanation. It does not yet search for captures or render competing candidates automatically. Errors preserve the current rig and include trace/native request IDs; no provider is substituted silently.
 
-Credentials are persisted by Rust outside the repo using owner-only protected files, not macOS Keychain. **Disconnect** removes local tokens and attempts remote revocation. One saved account registration is supported; **Reconnect ChatGPT** reuses it. Live authorization/catalog/inference is a user acceptance step. See [ADR 006](docs/adr-006-chatgpt-agent.md) for security and preview constraints.
+Credentials are persisted by Rust outside the repo using owner-only protected files, not macOS Keychain. **Disconnect** removes local tokens and attempts remote revocation. One saved account registration is supported; **Reconnect ChatGPT** reuses it. Live account catalog and native GPT-6 Astra tone inference have been verified. Packaged GUI generation, restart/reconnect and sign-out remain user acceptance steps. See [ADR 006](docs/adr-006-chatgpt-agent.md) for security and preview constraints.
 
 ### Optional local model
 
