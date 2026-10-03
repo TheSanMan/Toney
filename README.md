@@ -14,7 +14,7 @@ User intent → ToneIntent → deterministic tone compiler → ToneSpec → audi
 
 `ToneSpec` is the authoritative rig shared by the agent, controls, history, persistence, and audio processing. Manual edits become the input to subsequent agent requests.
 
-## Working checkpoint: NAM pedals and ChatGPT tone engineer
+## Working checkpoint: live guitar input
 
 This repository begins with a small, runnable vertical slice, following the requested agent-first development order:
 
@@ -24,7 +24,18 @@ This repository begins with a small, runnable vertical slice, following the requ
 - An offline browser audio preview makes the result audible using a synthetic plucked-string phrase or an imported clean DI file.
 - Local version history, preset export/import, and request traces support iteration and diagnosis.
 
-The Tauri macOS desktop app packages the workbench with a JUCE helper for real device discovery, independent rig validation, and offline audio rendering through eight builtin effects. Preset, WAV, and diagnostic exports use native save dialogs. Choose native DSP or browser preview to audition the same source. Native rendering also supports imported Neural Amp Modeler captures and measured cabinet IRs. Realtime guitar input is a later checkpoint.
+The Tauri macOS desktop app packages the workbench with a JUCE helper for device discovery, rig validation, offline audio rendering and explicit live guitar monitoring. The live chain supports all eight builtin effects, NAM pedals/amps and measured cabinet IRs. Preset, WAV, and diagnostic exports use native save dialogs. Choose native DSP or browser preview to audition recordings; live guitar requires desktop and an audio interface.
+
+### Plug in and play
+
+1. Open the latest built **Toney.app**. Connect your guitar to your interface's instrument / Hi-Z input and connect wired headphones to the interface. Turn its direct monitor off to hear the processed signal.
+2. In **Audio devices → Live guitar**, select the interface input and headphone output. Select the guitar's input channel (channel 1 or 2 on many interfaces).
+3. Start with **48 kHz**, **128 samples**, input trim **0 dB**, output **−12 dB**. Choose **Start live guitar** and allow microphone access. Device discovery and app launch keep input closed.
+4. Play and observe the input/output meters. If the input clips, reduce the interface's hardware input gain. If you hear clicks or the deadline overrun counter rises, Stop and try **256** or **512 samples**. The displayed latency is an estimate from device reports plus one processing buffer, not a measured guitar-to-headphones round trip.
+5. Change knobs, bypass blocks, choose downloaded captures, or ask the agent to refine the sound. Press **Apply current rig + gains** to hear the new revision. The previous rig keeps playing during preparation; a short crossfade switches successful updates. Delay/reverb state restarts on Apply.
+6. Choose **Stop live guitar** to close input. Stop also remains available during agent requests and DSP preparation. Quitting closes the helper; recording audition is disabled during monitoring.
+
+Live NAM requires all enabled captures and the interface to use the same sample rate (usually 48 kHz). This slice supports up to two NAM nodes and one cabinet IR, mono guitar duplicated to the first two hardware outputs. It does not record audio, host plugins or stream guitar to ChatGPT. Hardware playback, permission denial, unplug/replug and perceived latency still require the guitar/interface acceptance check in [checkpoint 009](docs/checkpoints.md).
 
 ## Development
 
@@ -130,7 +141,7 @@ Later work adds audio analysis, candidate search, reference matching, preference
 
 Core generation and audio preview run locally. Optional inference uses the selected provider: local Ollama or opt-in ChatGPT plan usage. ChatGPT sends the description and rig settings to OpenAI. Audio recordings are not uploaded. TONE3000 browsing, sign-in, and requested downloads use its online service; installed assets work offline. Diagnostic exports include prompts, rigs, and asset attribution, so keep them private as appropriate. Credentials are excluded.
 
-The original [product proposal](docs/product-proposal.md) is preserved for reference. The current checkpoint follows the requested agent-first order; live input, audio analysis and distribution remain outstanding.
+The original [product proposal](docs/product-proposal.md) is preserved for reference. The current checkpoint follows the requested agent-first order. Live input implementation is available for hardware acceptance; audio analysis and distribution remain outstanding.
 
 ### Audition imported models without the GUI
 
