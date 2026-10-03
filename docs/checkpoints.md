@@ -187,3 +187,20 @@ Checkpoint pause / user acceptance:
 3. Choose **Continue with ChatGPT** and complete browser permission consent. Confirm the discovered catalog, one nuanced generation/refinement, preserved manual controls, model explanation, restart/reconnect and disconnect. Live account authorization, catalog and inference remain unverified until that acceptance run.
 
 Next: resolve any live acceptance errors, gather listening preferences, add cleared realistic DI examples and level-matched A/B, then a bounded gear-aware agent loop and one improved algorithmic effect at a time. A2/parametric NAM and realtime guitar input remain separate work.
+
+
+## 008.1 — ChatGPT authorization host-ID correction
+
+The user's live sign-in failed with `invalid_authorize_request`, parameter `ext_agent_host_id`. The initial implementation incorrectly treated any opaque random identifier as an accepted format and stored `toney:<base64url seed>`. The official [host ID documentation](https://developers.openai.com/siwc/token-sharing-open-source) specifies accepted URI formats, including `urn:uuid:<UUIDv4>`.
+
+Fixed:
+
+- Fresh installations persist a cryptographically random UUIDv4 URI before authorization. Version/variant bits and canonical hyphenated hexadecimal layout are checked.
+- Existing checkpoint008 identifiers automatically migrate on next launch. The original random seed deterministically derives the replacement; it is saved atomically with owner-only permissions and reused across restarts. Registration/credential files and downloaded assets are preserved. Unknown malformed stored formats fail explicitly.
+- The authorization regression now uses the actual persisted host-ID loader instead of an invalid placeholder. New tests cover accepted format, distinct installations, stable restarts, repeatable legacy migration, malformed IDs and preserved account records.
+
+Verification: all **12 focused ChatGPT Rust tests** pass; all-targets Clippy with warnings denied passes; formatting and Git whitespace checks pass. The macOS app rebuilt successfully and its bundled executable matches the final native build. Its current NAM helper is unchanged and matches the staged helper. Frontend/audio code is unchanged, so those prior gates were not repeated.
+
+Anonymous command-line authorization probes returned non-JSON HTTP403 for both formats and cannot establish OAuth acceptance. No user credentials or account consent were used in those probes. Complete live browser sign-in remains a user acceptance step.
+
+Checkpoint pause: quit the old Toney instance, reopen the rebuilt `apps/desktop/src-tauri/target/debug/bundle/macos/Toney.app`, and click **Continue with ChatGPT**. The saved invalid host ID repairs automatically; no manual app-data deletion is needed. Record any subsequent provider error separately from this corrected request field.
