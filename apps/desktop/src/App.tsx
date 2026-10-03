@@ -128,6 +128,8 @@ export function App() {
 
   useEffect(() => {
     audio.current?.pause();
+    audio.current?.removeAttribute('src');
+    audio.current?.load();
     setAudioUrl('');
     setRenderedWav(undefined);
     setListenMode('');

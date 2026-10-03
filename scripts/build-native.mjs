@@ -16,7 +16,8 @@ function run(command, args) {
 }
 
 run(cmake, ['-S', 'engine/audio', '-B', build, '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTING=ON',
-  ...(process.env.JUCE_PATH ? [`-DJUCE_PATH=${process.env.JUCE_PATH}`] : [])]);
+  ...(process.env.JUCE_PATH ? [`-DJUCE_PATH=${process.env.JUCE_PATH}`] : []),
+  ...(process.env.NAM_PATH ? [`-DNAM_PATH=${process.env.NAM_PATH}`] : [])]);
 run(cmake, ['--build', build, '--parallel', String(Math.min(4, availableParallelism()))]);
 run(ctest, ['--test-dir', build, '--output-on-failure']);
 const host = spawnSync('rustc', ['--print', 'host-tuple'], { encoding: 'utf8' });
