@@ -49,7 +49,7 @@ export function validateNativeAssetInfo(input: unknown, asset: AssetRef, request
     return { kind: 'asset-info', id: asset.id, assetKind: 'ir', sampleRate: info.sampleRate, channels: info.channels, frames: info.frames };
   }
   if (info.channels !== 1 || (info.architecture !== 'WaveNet' && info.architecture !== 'LSTM')
-    || !text(info.modelVersion, 30) || !/^0\.5\.\d+$/.test(info.modelVersion)) return invalid(requestId);
+    || !text(info.modelVersion, 30) || !/^0\.5\.[0-4]$/.test(info.modelVersion)) return invalid(requestId);
   return { kind: 'asset-info', id: asset.id, assetKind: 'nam', sampleRate: info.sampleRate, channels: 1, architecture: info.architecture, modelVersion: info.modelVersion };
 }
 

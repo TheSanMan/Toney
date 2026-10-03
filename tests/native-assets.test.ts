@@ -49,7 +49,7 @@ describe('asset inspection metadata', () => {
     for (const extra of [{ id: nam.id }, { assetKind: 'nam' }, { sampleRate: Infinity }, { sampleRate: 7999 }, { sampleRate: 96001 }, { channels: 3 }, { frames: 0 }, { frames: 96001 }, { frames: 1.5 }, { architecture: 'WaveNet' }, { path: '/tmp/ir.wav' }]) {
       expect(() => validateNativeAssetInfo({ ...irInfo, ...extra }, ir, 'test')).toThrow('mismatched');
     }
-    for (const extra of [{ channels: 2 }, { architecture: 'Transformer' }, { modelVersion: '1.0.0' }, { modelVersion: '0.5.unknown' }, { frames: 10 }]) {
+    for (const extra of [{ channels: 2 }, { architecture: 'Transformer' }, { modelVersion: '1.0.0' }, { modelVersion: '0.5.unknown' }, { modelVersion: '0.5.99' }, { frames: 10 }]) {
       expect(() => validateNativeAssetInfo({ ...namInfo, ...extra }, nam, 'test')).toThrow('mismatched');
     }
   });

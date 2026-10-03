@@ -88,3 +88,33 @@ Limits: approximate builtin effects, no native saturation oversampling, algorith
 Checkpoint pause: open the rebuilt desktop app, select Native builtin DSP, import a clean DI or use the demo, render/play/export, then compare Browser preview on the same source. The CLI audition gives audible native artifacts without GUI automation. Review one short slice before choosing the next tone-quality component.
 
 Next: measured cabinet IR loading and convolution with validated assets, audible A/B, missing-asset diagnostics, and preset asset references; NAM and realtime input follow their own acceptance checkpoints.
+
+## 005 — Imported cabinet IRs
+
+Implemented:
+
+- ToneSpec v2 content references with safe names and SHA-256 IDs; builtin v1 presets migrate at import. Typed selection preserves manual knobs and bypass states; agent refinement preserves selected models.
+- Durable Rust asset library with actual-helper inspection before atomic persistence, bounded inventories, diagnostic repair messages and hash-verified private render staging. Frontend calls cannot supply paths.
+- Measured cabinet convolution without trimming or normalization, aligned sample-rate conversion, stereo handling that preserves source channels, and existing peak/tail bounds.
+- Model library controls, explicit missing-file state, builtin restoration and native-only external processing.
+
+Verification on 2026-10-03 (America/Chicago):
+
+- IR native build passed 84 control, 49 render and 16 asset assertions. An impulse render matches direct discrete convolution within 1e-5; converted tap timing, stereo-to-mono averaging, SHA mismatch, missing/duplicate assets and bounds were exercised.
+- Frontend domain/asset/bridge suites passed 49 selected tests; lint and strict TypeScript passed. Tests include malformed metadata, response correlation/hash mismatches, unsafe files and native-only browser processing.
+- Rust asset checkpoint passed 20 tests and Clippy. Its headless Tauri test harness invokes the real JUCE helper to inspect/import/persist/reopen/stage/render a WAV IR, and rejects malformed imports without library entries.
+- Browser regression review imported a v2 preset with an absent NAM reference, showed its filename/missing state and trim labels, refused enabled external-model playback, preserved the reference through “make it wider”, rendered successfully after bypass, and restored the builtin model through its selector.
+- Historical checkpoint004 hosted CI passed at https://github.com/TheSanMan/Toney/actions/runs/37086061234.
+
+The user requested continuation through NAM integration, so work proceeds directly to checkpoint006 without pausing here. Native GUI testing remains pending Computer Use permissions; these headless tests do not establish WKWebView or native-dialog behavior.
+
+## 006 — Neural amp models
+
+Acceptance criteria:
+
+- Import and persist supported classic mono WaveNet/LSTM captures; reject unsupported, incomplete or unsafe configurations before upstream construction.
+- Run the pinned official NAM inference implementation at the model sample rate, with independent channel state and deterministic renders.
+- Preserve source sample rate/channel count, apply explicit trim and external EQ, and produce finite bounded WAV artifacts with correlated diagnostics.
+- Exercise the real helper and Rust transport, rebuild the bundled app, create an easy CLI audition, pass required gates and push the checkpoint.
+
+Verification evidence is recorded after final native and bundle checks complete.

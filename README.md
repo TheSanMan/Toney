@@ -95,7 +95,7 @@ The command prints paths to dry, bypass, crunch, and spacious WAVs plus their ri
 5. Snapshot/save a preset, restart, and reuse the imported files from the durable local library. On another device, reimport the same files; a missing file is shown explicitly and blocks rendering of its enabled node. Bypassed missing nodes do not block audition.
 6. Open **Diagnostics** to export the asset IDs, selected rig, render statistics, request IDs and errors. File contents are not included in traces or presets.
 
-Supported NAM files are classic mono WaveNet and LSTM captures with file version 0.5.x, up to 32 MiB. Advanced, conditioned, multi-input/output and unknown architectures are rejected. Captures run at their declared sample rate; models without a rate use 48 kHz. Source audio is resampled for inference and returned at its original rate and channel count. Each source channel gets independent model state. These are offline auditions, not realtime latency measurements.
+Supported NAM files are classic mono WaveNet and LSTM captures with file version 0.5.0–0.5.4, up to 32 MiB. Advanced, conditioned, multi-input/output and unknown architectures are rejected. Captures run at their declared sample rate; models without a rate use 48 kHz. Source audio is resampled for inference and returned at its original rate and channel count. Each source channel gets independent model state. These are offline auditions, not realtime latency measurements.
 
 Cabinet IRs must be nonempty mono/stereo WAVs at 8–96 kHz, up to two seconds/8 MiB, with finite, nonzero samples. They are convolved without trimming or normalization; source channel count is preserved. Stereo IR channels are averaged for mono sources. IR brightness/resonance controls apply additional filters.
 

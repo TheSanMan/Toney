@@ -95,7 +95,7 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
         {node.model === 'nam' && <small>Gain controls input trim; master controls output trim (−12 to +12 dB). Bass, mid and treble shape the captured sound with external EQ.</small>}
       </div>;
     })}</div>
-    <p className="preview-note">NAM: classic mono WaveNet and LSTM captures, file version 0.5.x, up to 32 MiB. Cabinet IR: mono/stereo WAV, up to 2 seconds and 8 MiB. Presets reference files by content; importing a preset does not import its audio or model files.</p>
+    <p className="preview-note">NAM: classic mono WaveNet and LSTM captures, file version 0.5.0–0.5.4, up to 32 MiB. Cabinet IR: mono/stereo WAV, up to 2 seconds and 8 MiB. Presets reference files by content; importing a preset does not import its audio or model files.</p>
     {status && <p className="asset-status" role="status">{status}</p>}
     {libraryWarnings.map((warning, index) => <p className="native-error" key={`${index}-${warning}`}>{warning}</p>)}
     {error && <p className="native-error" role="alert">{error}</p>}
