@@ -2,6 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { createNativeRequest, createNativeRenderRequest, NativeError, validateNativeResponse, type NativeCommand, type NativeResult, type AudioRenderResult } from '../../../../core/native/protocol';
 import { inspectPcmWav } from '../../../../core/native/wav';
 import type { AssetRef, ToneSpec } from '../../../../core';
+import { createLiveRequest, validateLiveResponse, type LiveConfiguration, type LiveGains, type LiveOperation, type LiveStatus } from '../../../../core/native/live';
 import {
   ASSET_SIZE_LIMITS, createNativeAssetImportRequest, createNativeAssetListRequest,
   validateNativeAssetImportResponse, validateNativeAssetListResponse,
@@ -9,6 +10,21 @@ import {
 } from '../../../../core/native/assets';
 
 export const isDesktop = (): boolean => isTauri();
+
+export async function liveRequest(operation: LiveOperation, tone?: ToneSpec, configuration?: LiveConfiguration | LiveGains): Promise<{ requestId: string; result: LiveStatus }> {
+  const request = createLiveRequest(operation, tone, configuration);
+  try {
+    if (!isDesktop()) throw new NativeError('DESKTOP_REQUIRED', 'Open Toney desktop to play through live guitar input.', request.requestId);
+    const response: unknown = await invoke(`native_live_${operation}`, { request });
+    return { requestId: request.requestId, result: validateLiveResponse(operation, request, response) };
+  } catch (error) {
+    // A status we cannot validate must never leave unreported monitoring active.
+    if (error instanceof NativeError && error.code === 'INVALID_LIVE_RESPONSE' && isDesktop()) {
+      await invoke('native_live_stop', { request: createLiveRequest('stop') }).catch(() => undefined);
+    }
+    throw correlatedError(error, request.requestId);
+  }
+}
 
 export async function importNativeAsset(kind: AssetRef['kind'], file: File): Promise<{ requestId: string } & NativeAssetDescriptor> {
   const request = createNativeAssetImportRequest(kind, file.name);

@@ -98,6 +98,7 @@ export function App() {
   const [model, setModel] = useState('llama3:latest');
   const [busy, setBusy] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [liveMonitoring, setLiveMonitoring] = useState(false);
   const [message, setMessage] = useState('Describe the sound you have in mind. I’ll build a rig you can hear and dial in.');
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState('');
@@ -256,7 +257,7 @@ export function App() {
     <header className="app-header">
       <a className="wordmark" href="#">toney<span>●</span></a>
       <span className="tagline">YOUR TONE, DIALED IN.</span>
-      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>08</b></div>
+      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>09</b></div>
     </header>
     <main className="workspace">
       <aside className="engineer-panel">
@@ -313,7 +314,8 @@ export function App() {
         <AssetLibraryPanel tone={tone} locked={locked}
           onSelect={(nodeId, asset) => setTone((current) => setToneAsset(current, nodeId, asset))}
           onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))} />
-        <AudioDevicesPanel tone={tone} locked={locked} onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))} />
+        <AudioDevicesPanel tone={tone} locked={locked} onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))}
+          onMonitoringChange={(active) => { if (active) audio.current?.pause(); setLiveMonitoring(active); }} />
         <section className="listening-panel">
           <div className="listening-heading"><div className="eyebrow">HEAR THE DIFFERENCE</div>
             <label className="render-backend">Render with <select aria-label="Audio rendering backend" value={renderBackend} disabled={locked} onChange={(event) => setRenderBackend(event.target.value)}>
@@ -323,13 +325,13 @@ export function App() {
             <button disabled={locked} onClick={() => diInput.current?.click()}>Import clean DI</button>
             {source && <button disabled={locked} onClick={() => { setSource(undefined); setSourceName('Built-in plucked-string phrase'); }}>Use demo</button>}
           </div>
-          <div className="playback-row"><button disabled={locked} onClick={() => void listen(true)}>▷ Dry source</button>
-            <button className="primary" disabled={locked} onClick={() => void listen()}>{rendering ? 'Rendering…' : '▶ Hear this rig'}</button>
+          <div className="playback-row"><button disabled={locked || liveMonitoring} onClick={() => void listen(true)}>▷ Dry source</button>
+            <button className="primary" disabled={locked || liveMonitoring} onClick={() => void listen()}>{rendering ? 'Rendering…' : '▶ Hear this rig'}</button>
             {renderedWav && <button disabled={locked} onClick={() => void saveFile('toney-preview.wav', renderedWav)}>Export WAV ↓</button>}
             <span>{listenMode}</span>
           </div>
-          <audio ref={audio} controls src={audioUrl || undefined} aria-label="Tone preview" />
-          <p className="preview-note">Synthetic plucked strings by default. Import your guitar DI for a useful audition. Imported NAM captures and cabinet IRs require native rendering in the desktop app. Browser preview supports builtin effects. Live guitar input comes later.</p>
+          <audio ref={audio} controls={!liveMonitoring} src={liveMonitoring ? undefined : audioUrl || undefined} aria-label="Tone preview" />
+          <p className="preview-note">Synthetic plucked strings by default. Import your guitar DI for a useful audition. Imported NAM captures and cabinet IRs require native rendering in the desktop app. Browser preview supports builtin effects. {liveMonitoring ? 'Stop live guitar to audition recordings.' : 'Use Live guitar above to play through your audio interface.'}</p>
         </section>
         <section className="history-panel"><div className="history-heading"><span className="eyebrow">TONE HISTORY</span>
           <button disabled={locked} onClick={() => setHistory((items) => [...items, tone].slice(-20))}>Snapshot current rig +</button></div>

@@ -85,7 +85,7 @@ describe.skipIf(!existsSync(executable))('Actual native NAM and cabinet asset in
     if (result.kind !== 'audio-render') throw new Error('Expected rendered audio');
     const bytes = readFileSync(outputPath);
     const wave = inspectPcmWav(bytes);
-    expect(result).toMatchObject({ kind: 'audio-render', engineVersion: '0.5.0', toneId: tone.id, revision: tone.revision,
+    expect(result).toMatchObject({ kind: 'audio-render', engineVersion: '0.6.0', toneId: tone.id, revision: tone.revision,
       sampleRate: 44100, channels: 1, inputFrames: 2205, outputFrames: wave.frames });
     expect(wave.sampleRate).toBe(result.sampleRate); expect(wave.channels).toBe(result.channels);
     expect(Math.abs(wave.peak - result.peak)).toBeLessThanOrEqual(0.0001);

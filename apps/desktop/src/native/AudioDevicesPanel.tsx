@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ToneSpec } from '../../../../core';
 import { NativeError, type DeviceInventory, type EngineInfo, type RigValidation } from '../../../../core/native/protocol';
 import { isDesktop, nativeRequest } from './bridge';
+import { LiveInputPanel } from './LiveInputPanel';
 
 export interface NativeDiagnostic {
   operation: string;
@@ -11,8 +12,9 @@ export interface NativeDiagnostic {
   error?: { code: string; message: string };
 }
 
-export function AudioDevicesPanel({ tone, locked, onDiagnostic }: {
+export function AudioDevicesPanel({ tone, locked, onDiagnostic, onMonitoringChange }: {
   tone: ToneSpec; locked: boolean; onDiagnostic: (diagnostic: NativeDiagnostic) => void;
+  onMonitoringChange: (active: boolean) => void;
 }) {
   const desktop = isDesktop();
   const [info, setInfo] = useState<EngineInfo>();
@@ -62,7 +64,7 @@ export function AudioDevicesPanel({ tone, locked, onDiagnostic }: {
   const currentValidated = validation?.toneId === tone.id && validation.revision === tone.revision;
   return <section className="native-panel">
     <div className="native-heading"><div><span className="eyebrow">AUDIO DEVICES</span>
-      <p>{desktop ? 'System device discovery · live guitar input comes later' : 'Open the desktop app for system audio devices'}</p></div>
+      <p>{desktop ? 'Select your guitar interface below · discovery keeps input closed' : 'Open the desktop app for system audio devices'}</p></div>
       <span className={`native-status ${info ? 'ready' : ''}`}>{desktop ? (info ? 'NATIVE CONTROL READY' : (error ? 'NATIVE CONTROL UNAVAILABLE' : 'CHECKING NATIVE CONTROL')) : 'BROWSER AUDITION'}</span>
     </div>
     {desktop && <>
@@ -79,5 +81,6 @@ export function AudioDevicesPanel({ tone, locked, onDiagnostic }: {
       </div>
       {error && <p className="native-error" role="alert">{error}</p>}
     </>}
+    <LiveInputPanel tone={tone} inventory={inventory} locked={locked} onDiagnostic={onDiagnostic} onMonitoringChange={onMonitoringChange} />
   </section>;
 }

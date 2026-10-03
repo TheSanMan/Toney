@@ -18,7 +18,7 @@ describe.skipIf(!existsSync(executable))('TypeScript ↔ native helper integrati
 
   it('correlates real engine information and generated rig acknowledgements', () => {
     const info = createNativeRequest('get_engine_info');
-    expect(validateNativeResponse(info, exchange(info))).toMatchObject({ kind: 'engine-info', backend: 'JUCE', engineVersion: '0.5.0' });
+    expect(validateNativeResponse(info, exchange(info))).toMatchObject({ kind: 'engine-info', backend: 'JUCE', engineVersion: '0.6.0' });
     const tone = createInitialTone();
     tone.chain[0]!.enabled = false;
     const request = createNativeRequest('validate_tone_spec', tone);
