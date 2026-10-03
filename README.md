@@ -28,7 +28,35 @@ The browser workbench is a development harness for the future desktop app. Its e
 
 ## Development
 
-The setup and commands will be completed with the first working checkpoint. Development requires Node.js 22 or later and npm. The eventual packaged application will include its runtimes.
+Development requires Node.js 22 or later and npm. The eventual packaged application will include its runtimes.
+
+```sh
+cd /Users/sanjeetpanigrahi/Desktop/WorkFiles/Toney
+npm ci
+npm run dev
+```
+
+Open [the local workbench](http://127.0.0.1:5173). The server binds only to this machine. Use `npm run check` to run lint, typecheck, tests, and the production build. `npm run test:watch` runs tests while editing.
+
+### Try the first checkpoint
+
+1. Pick **Dark grunge** and click **Dial in my tone**.
+2. Click **Hear this rig**. If your browser blocks automatic playback, press the audio player's play button. Compare with **Dry source**.
+3. Adjust a knob or bypass a pedal, then ask “make it wider.” The agent refines the current manual settings.
+4. Use **New rig** to start fresh; try **Clean funk** or **Dreamy ambient** and listen to the difference.
+5. Import a mono/stereo clean guitar DI clip (up to 90 seconds/50 MB) for a more useful audition. WAV is the safest choice; other decoding formats depend on your browser.
+6. Save a JSON preset, export a rendered WAV, or snapshot the rig into local history. Generated tones and snapshots are retained in browser storage; manual edits need a snapshot or preset export to survive a reload.
+7. Open **Diagnostics** to inspect stage timings and export the exact request, starting rig, and trace ID.
+
+Some embedded browsers block file downloads. If a preset does not download, open **Diagnostics → Current preset JSON** and copy it into a `.json` file, or use the workbench in your normal browser. Local snapshots remain available in the embedded workbench.
+
+### Optional local model
+
+The default **Offline tone rules** provider is deterministic domain logic, not an LLM. It supports common gain, brightness, dynamics, space, and style descriptions and reports unrecognized language.
+
+To use an installed Ollama model, start Ollama, select **Local model · Ollama**, and enter its installed model name. The development server proxies requests only to `127.0.0.1:11434`. No weights are downloaded automatically. `llama3:latest` was successfully tested on the development machine; model output is schema-validated and failures do not replace the current rig. There is a 45-second inference timeout.
+
+The Ollama proxy is part of `npm run dev`; a static build or `npm run preview` provides the offline rules workbench only. Production desktop inference and packaging remain a later checkpoint.
 
 ## Checkpoints
 
@@ -42,4 +70,6 @@ Later work adds audio analysis, candidate search, reference matching, preference
 
 ## Privacy
 
-Core generation and audio preview run locally. Optional model inference must use an explicitly selected local provider. Audio recordings are not uploaded. Network research is a later, opt-in capability.
+Core generation and audio preview run locally. Optional model inference must use an explicitly selected local provider. Audio recordings are not uploaded. Diagnostic exports include prompts and rigs, so keep them private as appropriate. Network research is a later, opt-in capability.
+
+The original [product proposal](docs/product-proposal.md) is preserved for reference. The current checkpoint follows the direct request to start with the agent; native audio phases are still outstanding.

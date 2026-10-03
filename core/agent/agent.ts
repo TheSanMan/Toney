@@ -42,6 +42,7 @@ export class ToneAgent {
       if (result.issues.includes('muddy')) descriptions.push('I adjusted the strongest plausible source of muddiness in this rig.');
       else if (requested.includes('distortion.amount')) descriptions.push(intent.distortion.amount < baseline.distortion.amount ? 'I backed off the gain.' : 'I added drive and sustain.');
       if (requested.includes('character.brightness')) descriptions.push(intent.character.brightness < baseline.character.brightness ? 'I softened the top end.' : 'I added some top-end bite.');
+      if (requested.includes('character.warmth')) descriptions.push(intent.character.warmth > baseline.character.warmth ? 'I added warmth through the amp and cabinet.' : 'I tightened the low end.');
       if (requested.includes('character.width')) descriptions.push('I adjusted chorus width.');
       if (requested.some((path) => path.startsWith('space.'))) descriptions.push('I adjusted the delay and room around the notes.');
       if (requested.some((path) => path.startsWith('dynamics.'))) descriptions.push('I adjusted the compression and pick response.');

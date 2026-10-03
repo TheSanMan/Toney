@@ -28,8 +28,10 @@ function download(name: string, value: Blob) {
   const link = document.createElement('a');
   link.href = url;
   link.download = name;
+  document.body.appendChild(link);
   link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function jsonDownload(name: string, value: unknown) {
@@ -155,7 +157,7 @@ export function App() {
       if (audio.current) {
         audio.current.src = url;
         try { await audio.current.play(); }
-        catch { setError('Preview is ready. Press play in the audio controls to listen.'); }
+        catch { setListenMode(`${dry ? 'Dry source' : 'Processed rig'} · press play below`); }
       }
     } catch (reason) {
       setError(`Audio preview: ${reason instanceof Error ? reason.message : 'Rendering failed.'}`);
@@ -272,7 +274,10 @@ export function App() {
       <button onClick={() => setDiagnostics(!diagnostics)}>{diagnostics ? 'Close' : 'Open'} diagnostics {trace ? `· ${trace.id.slice(0, 8)}` : ''}</button></footer>
     {diagnostics && <section className="diagnostics"><div className="history-heading"><h3>Request diagnostics</h3>
       <button onClick={() => jsonDownload('toney-diagnostics.json', { trace, request: lastRequest, currentTone: tone, error })}>Export trace ↓</button></div>
-      <p>Exports include your prompt and rig. Diagnostics remain on this device.</p><pre>{JSON.stringify(trace ?? { status: 'No agent request yet.' }, null, 2)}</pre></section>}
+      <p>Exports include your prompt and rig. Diagnostics remain on this device.</p><pre>{JSON.stringify(trace ?? { status: 'No agent request yet.' }, null, 2)}</pre>
+      <details><summary>Current preset JSON</summary><p>If your browser blocks downloads, copy this text into a JSON file.</p>
+        <textarea aria-label="Current preset JSON" readOnly value={JSON.stringify(tone, null, 2)} rows={12} /></details>
+    </section>}
     <input className="hidden-input" ref={presetInput} type="file" accept=".json,application/json" onChange={(event) => void importPreset(event.target.files?.[0])} />
     <input className="hidden-input" ref={diInput} type="file" accept="audio/*,.wav,.aiff,.flac" onChange={(event) => void importDI(event.target.files?.[0])} />
   </div>;
