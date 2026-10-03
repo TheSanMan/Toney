@@ -220,13 +220,7 @@ fn validate_info(info: &Value, asset: &AssetRef) -> Result<(), NativeError> {
                 || !info
                     .get("modelVersion")
                     .and_then(Value::as_str)
-                    .is_some_and(|v| {
-                        v.strip_prefix("0.5.").is_some_and(|patch| {
-                            !patch.is_empty()
-                                && patch.len() <= 25
-                                && patch.bytes().all(|byte| byte.is_ascii_digit())
-                        })
-                    })
+                    .is_some_and(|v| matches!(v, "0.5.0" | "0.5.1" | "0.5.2" | "0.5.3" | "0.5.4"))
                 || info.get("frames").is_some()
             {
                 return Err(invalid());
@@ -908,6 +902,121 @@ mod tests {
         assert_eq!(std::fs::read_dir(invalid_root.path()).unwrap().count(), 0);
     }
 
+    fn nam_fixture() -> PathBuf {
+        let build = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../engine/audio/build");
+        let mut sources: Vec<PathBuf> = std::env::var_os("NAM_PATH")
+            .map(PathBuf::from)
+            .into_iter()
+            .collect();
+        if let Ok(cache) = std::fs::read_to_string(build.join("CMakeCache.txt")) {
+            for line in cache.lines() {
+                if let Some(source) = line
+                    .strip_prefix("NAM_PATH:PATH=")
+                    .or_else(|| line.strip_prefix("toney_nam_SOURCE_DIR:STATIC="))
+                {
+                    if !source.is_empty() {
+                        sources.push(PathBuf::from(source));
+                    }
+                }
+            }
+        }
+        sources.push(build.join("_deps/toney_nam-src"));
+        sources.into_iter().map(|source| source.join("example_models/lstm.nam")).find(|path| path.is_file())
+            .expect("Build the native helper first or set NAM_PATH to the pinned official NAM core checkout; its LSTM example is required for the real bridge test.")
+    }
+
+    #[test]
+    fn real_helper_imports_official_nam_and_renders_after_library_restart() {
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_shell::init())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let data = std::fs::read(nam_fixture()).unwrap();
+        let request = ImportRequest {
+            protocol_version: 1,
+            request_id: "nam-import-123".into(),
+            kind: AssetKind::Nam,
+            name: "official-lstm.nam".into(),
+            data: data.clone(),
+        };
+        let imported = tauri::async_runtime::block_on(import_asset(
+            app.handle().clone(),
+            request,
+            root.path().to_owned(),
+        ))
+        .unwrap();
+        assert_eq!(imported.asset.id, content_id(&data));
+        assert_eq!(imported.info["architecture"], "LSTM");
+        assert_eq!(imported.info["modelVersion"], "0.5.4");
+        assert_eq!(imported.response["requestId"], "nam-import-123");
+        assert_eq!(
+            list_library(root.path()).unwrap().assets[0].asset.id,
+            imported.asset.id
+        );
+        let mut wave = super::super::tests::test_wav();
+        wave[4..8].copy_from_slice(&40u32.to_le_bytes());
+        wave[40..44].copy_from_slice(&4u32.to_le_bytes());
+        wave.extend_from_slice(&8192i16.to_le_bytes());
+        wave.extend_from_slice(&0i16.to_le_bytes());
+        let staging = super::super::stage_render(&wave).unwrap();
+        let tone = json!({"schemaVersion":2,"id":"nam-bridge-tone","name":"NAM bridge test","revision":1,"chain":[{"id":"amp","type":"amp","model":"nam","enabled":true,"asset":imported.asset,"parameters":{"gain":0.25,"bass":0.5,"mid":0.55,"treble":0.5,"master":0.65}}],"metadata":{"createdAt":"2026-10-03T00:00:00.000Z","updatedAt":"2026-10-03T00:00:00.000Z","source":"manual"}});
+        let resolved =
+            stage_tone_assets(root.path(), &tone, staging.path(), "nam-render-123").unwrap();
+        let request = EngineRequest {
+            protocol_version: 1,
+            request_id: "nam-render-123".into(),
+            command: EngineCommand::RenderAudio,
+            tone: Some(tone),
+            asset: None,
+            render: Some(super::super::RenderPaths {
+                input_path: staging
+                    .path()
+                    .join("input.wav")
+                    .to_string_lossy()
+                    .into_owned(),
+                output_path: staging
+                    .path()
+                    .join("output.wav")
+                    .to_string_lossy()
+                    .into_owned(),
+                assets: resolved,
+            }),
+        };
+        let response = tauri::async_runtime::block_on(run_engine_request(
+            app.handle().clone(),
+            request,
+            Duration::from_secs(60),
+        ))
+        .unwrap();
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["requestId"], "nam-render-123");
+        assert!(response["result"]["peak"].as_f64().unwrap() > 0.0);
+        assert!(
+            !super::super::read_render_output(staging.path(), "nam-render-123")
+                .unwrap()
+                .is_empty()
+        );
+        let mut unsupported: Value = serde_json::from_slice(&data).unwrap();
+        unsupported["version"] = json!("0.5.5");
+        let request = ImportRequest {
+            protocol_version: 1,
+            request_id: "nam-version-123".into(),
+            kind: AssetKind::Nam,
+            name: "unsupported.nam".into(),
+            data: serde_json::to_vec(&unsupported).unwrap(),
+        };
+        let error = tauri::async_runtime::block_on(import_asset(
+            app.handle().clone(),
+            request,
+            root.path().to_owned(),
+        ))
+        .err()
+        .unwrap();
+        assert_eq!(error.code, "ASSET_UNSUPPORTED");
+        assert_eq!(list_library(root.path()).unwrap().assets.len(), 1);
+    }
+
     #[test]
     fn list_requests_are_versioned_and_cannot_select_library_paths() {
         assert!(validate_list_request(json!({"protocolVersion":1,"requestId":"list-123"})).is_ok());
@@ -974,6 +1083,11 @@ mod tests {
         };
         let info = json!({"kind":"asset-info","id":asset.id,"assetKind":"nam","sampleRate":48000,"channels":1,"architecture":"WaveNet","modelVersion":"0.5.4"});
         assert!(validate_info(&info, &asset).is_ok());
+        for version in ["0.5.5", "0.5.04", "0.6.0", "0.5.4-extra"] {
+            let mut unsupported = info.clone();
+            unsupported["modelVersion"] = json!(version);
+            assert!(validate_info(&unsupported, &asset).is_err());
+        }
         let mut unsupported = info;
         unsupported["architecture"] = json!("Transformer");
         assert!(validate_info(&unsupported, &asset).is_err());
