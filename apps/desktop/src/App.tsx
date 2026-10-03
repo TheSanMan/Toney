@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AgentError, getNodeDefinition, OllamaProvider, ToneAgent, createInitialTone, collectToneAssets,
+  AgentError, ChatGPTProvider, getNodeDefinition, OllamaProvider, ToneAgent, createInitialTone, collectToneAssets,
   setNodeEnabled, setToneParameter, setToneAsset, validateToneSpec,
   type AgentTrace, type ToneIntent, type ToneNode, type ToneSpec,
 } from '../../../core';
@@ -9,6 +9,9 @@ import { desktopOllamaTransport, exportNativeFile, isDesktop, renderNativeAudio 
 import { NativeError } from '../../../core/native/protocol';
 import { AudioDevicesPanel, type NativeDiagnostic } from './native/AudioDevicesPanel';
 import { AssetLibraryPanel } from './native/AssetLibraryPanel';
+import { ChatGPTPanel } from './native/ChatGPTPanel';
+import { desktopChatGPTTransport } from './native/chatgpt';
+import { selectChatGPTModel, type ChatGPTStatus } from '../../../core/native/chatgpt';
 
 const STORAGE_KEY = 'toney.workbench.v1';
 const EXAMPLES = [
@@ -55,6 +58,13 @@ function Knob({ label, accessibleLabel, value, min, max, unit, displayValue, dis
   </label>;
 }
 
+function captureDisplayValue(node: ToneNode, key: string): number | undefined {
+  if (node.model !== 'nam') return undefined;
+  if (['gain', 'master', 'level'].includes(key)) return (node.parameters[key] - 0.5) * 24;
+  if (node.type === 'drive' && key === 'tone') return (node.parameters[key] - 0.5) * 12;
+  return undefined;
+}
+
 function Pedal({ node, busy, change, bypass }: {
   node: ToneNode; busy: boolean;
   change: (key: string, value: number) => void; bypass: () => void;
@@ -67,8 +77,8 @@ function Pedal({ node, busy, change, bypass }: {
     {node.asset && <span className="pedal-asset" title={node.asset.name}>{node.asset.name}</span>}
     <div className="knobs">{Object.entries(effect.parameters).map(([key, definition]) =>
       <Knob key={key} {...definition} value={node.parameters[key]} disabled={busy}
-        displayValue={node.model === 'nam' && (key === 'gain' || key === 'master') ? (node.parameters[key] - 0.5) * 24 : undefined}
-        unit={node.model === 'nam' && (key === 'gain' || key === 'master') ? 'dB' : definition.unit}
+        displayValue={captureDisplayValue(node, key)}
+        unit={captureDisplayValue(node, key) === undefined ? definition.unit : 'dB'}
         accessibleLabel={`${effect.name} ${definition.label}`} onChange={(value) => change(key, value)} />,
     )}</div>
     <button className="footswitch" disabled={busy} onClick={bypass} aria-pressed={node.enabled}
@@ -82,7 +92,9 @@ export function App() {
   const [tone, setTone] = useState<ToneSpec>(() => history.at(-1) ?? createInitialTone());
   const [intent, setIntent] = useState<ToneIntent>();
   const [prompt, setPrompt] = useState(EXAMPLES[0]);
-  const [provider, setProvider] = useState('offline');
+  const [provider, setProvider] = useState('chatgpt');
+  const [chatgptModel, setChatGPTModel] = useState('');
+  const [chatgptStatus, setChatGPTStatus] = useState<ChatGPTStatus>();
   const [model, setModel] = useState('llama3:latest');
   const [busy, setBusy] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -145,9 +157,10 @@ export function App() {
   async function generate() {
     setBusy(true);
     setError('');
-    setLastRequest({ prompt, currentTone: tone, provider, model });
+    setLastRequest({ prompt, currentTone: tone, provider, model: provider === 'chatgpt' ? chatgptModel : model });
     try {
-      const agent = new ToneAgent(provider === 'ollama' ? new OllamaProvider(model.trim(), desktop ? desktopOllamaTransport : undefined) : undefined);
+      if (provider === 'chatgpt' && (chatgptStatus?.status !== 'connected' || !chatgptStatus.models.some((item) => item.slug === chatgptModel))) throw new Error('Continue with ChatGPT and choose an available model before dialing in your tone.');
+      const agent = new ToneAgent(provider === 'chatgpt' ? new ChatGPTProvider(chatgptModel, desktopChatGPTTransport) : provider === 'ollama' ? new OllamaProvider(model.trim(), desktop ? desktopOllamaTransport : undefined) : undefined);
       const result = await agent.run({ prompt, currentTone: tone, previousIntent: intent });
       keep(result.tone);
       setIntent(result.intent);
@@ -243,7 +256,7 @@ export function App() {
     <header className="app-header">
       <a className="wordmark" href="#">toney<span>●</span></a>
       <span className="tagline">YOUR TONE, DIALED IN.</span>
-      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>07</b></div>
+      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>08</b></div>
     </header>
     <main className="workspace">
       <aside className="engineer-panel">
@@ -254,7 +267,7 @@ export function App() {
           <label className="sr-only" htmlFor="tone-prompt">Describe or refine your tone</label>
           <textarea id="tone-prompt" value={prompt} maxLength={2000} disabled={locked}
             onChange={(event) => setPrompt(event.target.value)} placeholder="Describe a tone, or tell me what to change…" />
-          <button className="primary generate" disabled={locked || !prompt.trim()} type="submit">
+          <button className="primary generate" disabled={locked || !prompt.trim() || (provider === 'chatgpt' && (chatgptStatus?.status !== 'connected' || !chatgptModel))} type="submit">
             {busy ? 'Dialing it in…' : 'Dial in my tone'} <span>↗</span>
           </button>
         </form>
@@ -269,13 +282,17 @@ export function App() {
         <div className="provider-settings">
           <label htmlFor="provider">Interpretation</label>
           <select id="provider" value={provider} disabled={locked} onChange={(event) => setProvider(event.target.value)}>
-            <option value="offline">Offline tone rules</option><option value="ollama">Local model · Ollama</option>
+            <option value="chatgpt">ChatGPT · your plan</option><option value="offline">Offline tone rules</option><option value="ollama">Local model · Ollama</option>
           </select>
           {provider === 'ollama' && <label className="model-field">Installed model
             <input value={model} disabled={locked} onChange={(event) => setModel(event.target.value)} />
             <small>Uses Ollama on this machine. First response may take longer while the model loads.</small>
           </label>}
-          <small>{provider === 'offline' ? 'Deterministic interpretation · no LLM required' : 'Prompts go only to local Ollama'}</small>
+          <small>{provider === 'offline' ? 'Deterministic interpretation · no LLM required' : provider === 'ollama' ? 'Prompts go only to local Ollama' : 'Cloud inference · sign-in required'}</small>
+          {provider === 'chatgpt' && <ChatGPTPanel locked={locked} model={chatgptModel} onModel={setChatGPTModel} onStatus={(status) => {
+            setChatGPTStatus(status);
+            setChatGPTModel((current) => selectChatGPTModel(status.models, current));
+          }} />}
         </div>
       </aside>
 

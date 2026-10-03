@@ -7,3 +7,5 @@ export * from './agent/types';
 export { ToneAgent } from './agent/agent';
 export { DeterministicProvider } from './agent/interpreter';
 export { OllamaProvider } from './agent/ollama';
+export { ChatGPTProvider } from './agent/chatgpt';
+export type { ChatGPTTransport } from './agent/chatgpt';

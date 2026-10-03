@@ -4084,6 +4084,7 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
  "reqwest 0.12.28",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

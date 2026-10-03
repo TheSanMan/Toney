@@ -1,4 +1,5 @@
 mod assets;
+mod chatgpt;
 mod tone3000;
 
 use serde::{Deserialize, Serialize};
@@ -680,6 +681,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(tone3000::Tone3000State::default())
+        .manage(chatgpt::ChatGptState::default())
         .invoke_handler(tauri::generate_handler![
             native_engine_request,
             native_export_file,
@@ -690,6 +692,11 @@ pub fn run() {
             tone3000::native_tone3000_status,
             tone3000::native_tone3000_cancel,
             tone3000::native_tone3000_download,
+            chatgpt::native_chatgpt_sign_in,
+            chatgpt::native_chatgpt_status,
+            chatgpt::native_chatgpt_disconnect,
+            chatgpt::native_chatgpt_models,
+            chatgpt::native_chatgpt_interpret,
             native_ollama_chat
         ])
         .build(tauri::generate_context!())

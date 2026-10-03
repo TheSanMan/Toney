@@ -1,9 +1,9 @@
 import { compileTone, inferIntentFromTone } from '../tone/compiler';
 import { newId } from '../tone/operations';
-import { DEFAULT_INTENT, INTENT_PATHS } from '../tone/types';
+import { DEFAULT_INTENT } from '../tone/types';
 import { validateToneIntent, validateToneSpec } from '../tone/validation';
 import { DeterministicProvider } from './interpreter';
-import { AgentError, type AgentRequest, type AgentResult, type AgentTrace, type IntentProvider } from './types';
+import { AgentError, validateInterpretation, type AgentRequest, type AgentResult, type AgentTrace, type IntentProvider } from './types';
 
 export class ToneAgent {
   constructor(private readonly provider: IntentProvider = new DeterministicProvider()) {}
@@ -21,16 +21,13 @@ export class ToneAgent {
       const baseline = currentTone ? inferIntentFromTone(currentTone) : structuredClone(DEFAULT_INTENT);
       event(currentTone ? `Refining rig ${currentTone.id} revision ${currentTone.revision}` : 'Creating a new rig');
       stage = 'interpretation'; start = performance.now();
-      const result = await this.provider.interpret({ prompt: request.prompt, baseline, ...(currentTone ? { currentTone } : {}) });
+      const result = validateInterpretation(await this.provider.interpret({ prompt: request.prompt, baseline, ...(currentTone ? { currentTone } : {}) }));
       const intent = validateToneIntent(result.intent);
-      if (!Array.isArray(result.changedPaths) || result.changedPaths.some((path) => !INTENT_PATHS.includes(path))) throw new Error('Provider returned unsupported intent paths.');
-      if (!Array.isArray(result.warnings) || result.warnings.some((warning) => typeof warning !== 'string')) throw new Error('Provider returned invalid warnings.');
-      if (!Array.isArray(result.issues) || result.issues.some((issue) => !['muddy', 'harsh'].includes(issue))) throw new Error('Provider returned unsupported engineering issues.');
       event(`Validated intent; requested fields: ${result.changedPaths.join(', ') || 'none'}`);
       stage = 'compilation'; start = performance.now();
       if (currentTone && result.changedPaths.length === 0 && result.issues.length === 0) {
         event('No understood change; kept the current rig and revision.');
-        return { tone: currentTone, intent, message: 'I kept the current rig. Describe a specific change to gain, brightness, dynamics, or space.', warnings: result.warnings, trace };
+        return { tone: currentTone, intent, message: result.explanation ?? 'I kept the current rig. Describe a specific change to gain, brightness, dynamics, or space.', ...(result.explanation ? { explanation: result.explanation } : {}), warnings: result.warnings, trace };
       }
       const compiled = compileTone(intent, { baseline, changedPaths: result.changedPaths, issues: result.issues, traceId: trace.id, ...(currentTone ? { currentTone } : {}) });
       event(compiled.changes.join('; ') || 'No parameter changes were needed.');
@@ -46,9 +43,12 @@ export class ToneAgent {
       if (requested.includes('character.width')) descriptions.push('I adjusted chorus width.');
       if (requested.some((path) => path.startsWith('space.'))) descriptions.push('I adjusted the delay and room around the notes.');
       if (requested.some((path) => path.startsWith('dynamics.'))) descriptions.push('I adjusted the compression and pick response.');
-      return { tone, intent, message: descriptions.join(' ') || 'I built a balanced starting rig. Audition it and tell me what needs changing.', warnings: result.warnings, trace };
+      return { tone, intent, message: result.explanation ?? (descriptions.join(' ') || 'I built a balanced starting rig. Audition it and tell me what needs changing.'), ...(result.explanation ? { explanation: result.explanation } : {}), warnings: result.warnings, trace };
     } catch (error: unknown) {
-      event(`Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const failure = typeof error === 'object' && error !== null ? error as { code?: unknown; requestId?: unknown } : undefined;
+      const correlation = typeof failure?.requestId === 'string' ? ` · Native request ${failure.requestId}` : '';
+      const causeCode = typeof failure?.code === 'string' ? `${failure.code}: ` : '';
+      event(`Failed: ${causeCode}${error instanceof Error ? error.message : 'Unknown error'}${correlation}`);
       const code = stage === 'request-validation' ? 'INVALID_REQUEST' : stage === 'interpretation' ? 'INTENT_PROVIDER_FAILED' : 'TONE_COMPILATION_FAILED';
       throw new AgentError(code, error instanceof Error ? error.message : 'The tone request failed.', trace, { cause: error });
     }
