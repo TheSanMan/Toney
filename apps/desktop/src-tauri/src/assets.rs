@@ -30,7 +30,7 @@ impl AssetKind {
             Self::Nam => "nam",
         }
     }
-    fn limit(self) -> usize {
+    pub(super) fn limit(self) -> usize {
         match self {
             Self::Ir => 8 * 1024 * 1024,
             Self::Nam => 32 * 1024 * 1024,
@@ -55,8 +55,60 @@ pub(super) struct AssetRef {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct StoredAsset {
-    asset: AssetRef,
-    info: Value,
+    pub(super) asset: AssetRef,
+    pub(super) info: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) source: Option<AssetSource>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct AssetSource {
+    pub(super) provider: String,
+    pub(super) tone_id: u64,
+    pub(super) model_id: u64,
+    pub(super) tone_name: String,
+    pub(super) creator: String,
+    pub(super) license: String,
+    pub(super) url: String,
+}
+
+pub(super) fn valid_source_url(value: &str) -> bool {
+    value.len() <= 2000
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+        && url::Url::parse(value).is_ok_and(|url| {
+            url.scheme() == "https"
+                && matches!(url.host_str(), Some("www.tone3000.com" | "tone3000.com"))
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.port().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        })
+}
+
+fn validate_source(source: &Option<AssetSource>) -> Result<(), NativeError> {
+    if let Some(source) = source {
+        let text = |value: &str| !value.trim().is_empty() && value.encode_utf16().count() <= 200;
+        if source.provider != "tone3000"
+            || source.tone_id == 0
+            || source.model_id == 0
+            || source.tone_id > 9_007_199_254_740_991
+            || source.model_id > 9_007_199_254_740_991
+            || !text(&source.tone_name)
+            || !text(&source.creator)
+            || !text(&source.license)
+            || !valid_source_url(&source.url)
+        {
+            return Err(failure(
+                "ASSET_SOURCE_INVALID",
+                "Invalid TONE3000 creator or license metadata.",
+                None,
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -80,8 +132,10 @@ struct ImportRequest {
 #[derive(Serialize)]
 pub(super) struct ImportOutput {
     response: Value,
-    asset: AssetRef,
-    info: Value,
+    pub(super) asset: AssetRef,
+    pub(super) info: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) source: Option<AssetSource>,
 }
 #[derive(Debug, Serialize)]
 struct AssetDiagnostic {
@@ -329,6 +383,7 @@ fn read_descriptor(root: &Path, id: &str) -> Result<StoredAsset, NativeError> {
         ));
     }
     validate_info(&stored.info, &stored.asset)?;
+    validate_source(&stored.source)?;
     Ok(stored)
 }
 fn verified_bytes(root: &Path, asset: &AssetRef) -> Result<Vec<u8>, NativeError> {
@@ -393,6 +448,7 @@ fn persist_asset(
     ensure_library(root)?;
     validate_ref(&stored.asset)?;
     validate_info(&stored.info, &stored.asset)?;
+    validate_source(&stored.source)?;
     if bytes.len() > stored.asset.kind.limit() || content_id(bytes) != stored.asset.id {
         return Err(failure(
             "ASSET_CORRUPT",
@@ -403,9 +459,36 @@ fn persist_asset(
     let destination = root.join(&stored.asset.id);
     if destination.exists() {
         verified_bytes(root, &stored.asset)?;
-        let original = read_descriptor(root, &stored.asset.id)?;
+        let mut original = read_descriptor(root, &stored.asset.id)?;
         if original.info != stored.info {
             return Err(failure("ASSET_DESCRIPTOR_INVALID", "Existing metadata disagrees with inspection of its bytes. Restore the original library entry or remove it and reimport.", None));
+        }
+        if stored.source.is_some() && original.source != stored.source {
+            original.source = stored.source;
+            let descriptor = serde_json::to_vec(&original).map_err(|_| {
+                failure(
+                    "ASSET_SOURCE_INVALID",
+                    "Cannot encode source metadata.",
+                    None,
+                )
+            })?;
+            let mut file = tempfile::NamedTempFile::new_in(&destination).map_err(|_| {
+                failure("ASSET_IMPORT_FAILED", "Cannot stage source metadata.", None)
+            })?;
+            file.write_all(&descriptor)
+                .and_then(|()| file.flush())
+                .and_then(|()| file.as_file().sync_all())
+                .map_err(|_| {
+                    failure("ASSET_IMPORT_FAILED", "Cannot save source metadata.", None)
+                })?;
+            file.persist(destination.join("descriptor.json"))
+                .map_err(|_| {
+                    failure(
+                        "ASSET_IMPORT_FAILED",
+                        "Cannot atomically update source metadata.",
+                        None,
+                    )
+                })?;
         }
         return Ok(original);
     }
@@ -648,6 +731,41 @@ async fn import_asset<R: tauri::Runtime>(
     request: ImportRequest,
     root: PathBuf,
 ) -> Result<ImportOutput, NativeError> {
+    import_asset_with_source(app, request, root, None).await
+}
+
+pub(super) async fn import_downloaded_asset(
+    app: tauri::AppHandle,
+    request_id: String,
+    kind: AssetKind,
+    name: String,
+    data: Vec<u8>,
+    source: AssetSource,
+) -> Result<StoredAsset, NativeError> {
+    let root = library_path(&app)?;
+    let request = ImportRequest {
+        protocol_version: 1,
+        request_id,
+        kind,
+        name,
+        data,
+    };
+    validate_import_bounds(&request)?;
+    validate_source(&Some(source.clone()))?;
+    let output = import_asset_with_source(app, request, root, Some(source)).await?;
+    Ok(StoredAsset {
+        asset: output.asset,
+        info: output.info,
+        source: output.source,
+    })
+}
+
+async fn import_asset_with_source<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    request: ImportRequest,
+    root: PathBuf,
+    source: Option<AssetSource>,
+) -> Result<ImportOutput, NativeError> {
     let request_id = request.request_id;
     let id = Some(request_id.as_str());
     let asset = AssetRef {
@@ -718,7 +836,11 @@ async fn import_asset<R: tauri::Runtime>(
         error.request_id = Some(request_id.clone());
         error
     })?;
-    let stored = StoredAsset { asset, info };
+    let stored = StoredAsset {
+        asset,
+        info,
+        source,
+    };
     let saved = tauri::async_runtime::spawn_blocking(move || persist_asset(&root, stored, &bytes))
         .await
         .map_err(|_| failure("ASSET_IMPORT_FAILED", "Asset persistence task failed.", id))?
@@ -731,6 +853,7 @@ async fn import_asset<R: tauri::Runtime>(
         response,
         asset: saved.asset,
         info: saved.info,
+        source: saved.source,
     })
 }
 
@@ -808,7 +931,11 @@ mod tests {
             name: name.into(),
         };
         let info = json!({"kind":"asset-info","id":asset.id,"assetKind":"ir","sampleRate":48000,"channels":1,"frames":16});
-        StoredAsset { asset, info }
+        StoredAsset {
+            asset,
+            info,
+            source: None,
+        }
     }
     fn tone(asset: &AssetRef, enabled: bool) -> Value {
         json!({"schemaVersion":2,"chain":[{"type":"cab","model":"cab_ir","enabled":enabled,"asset":asset}]})
@@ -1207,5 +1334,45 @@ mod tests {
                 "ASSET_CORRUPT"
             );
         }
+    }
+    #[test]
+    fn downloaded_provenance_survives_reopen_and_same_content_local_reimport() {
+        let root = tempfile::tempdir().unwrap();
+        let data = b"fixture impulse bytes";
+        let original = persist_asset(root.path(), stored(data, "first.wav"), data).unwrap();
+        assert!(original.source.is_none());
+        let source = AssetSource {
+            provider: "tone3000".into(),
+            tone_id: 12,
+            model_id: 34,
+            tone_name: "Studio cabinet".into(),
+            creator: "creator".into(),
+            license: "cc-by".into(),
+            url: "https://www.tone3000.com/tones/studio-cabinet".into(),
+        };
+        let mut downloaded = stored(data, "remote.wav");
+        downloaded.source = Some(source.clone());
+        let saved = persist_asset(root.path(), downloaded, data).unwrap();
+        assert_eq!(saved.asset.name, "first.wav");
+        assert_eq!(saved.source, Some(source.clone()));
+        let reopened = list_library(root.path()).unwrap();
+        assert_eq!(reopened.assets[0].source, Some(source.clone()));
+        let reimported = persist_asset(root.path(), stored(data, "renamed.wav"), data).unwrap();
+        assert_eq!(reimported.source, Some(source.clone()));
+        assert_eq!(
+            verified_bytes(root.path(), &reimported.asset).unwrap(),
+            data
+        );
+        let mut malformed = stored(b"new", "new.wav");
+        let mut unsafe_source = source;
+        unsafe_source.url = "https://evil.test/model?token=secret".into();
+        malformed.source = Some(unsafe_source);
+        assert_eq!(
+            persist_asset(root.path(), malformed, b"new")
+                .unwrap_err()
+                .code,
+            "ASSET_SOURCE_INVALID"
+        );
+        assert_eq!(list_library(root.path()).unwrap().assets.len(), 1);
     }
 }

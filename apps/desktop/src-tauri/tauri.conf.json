@@ -9,11 +9,43 @@
     "beforeBuildCommand": "npm --prefix ../.. run build"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "Toney", "width": 1440, "height": 1000, "minWidth": 900, "minHeight": 650 }],
+    "windows": [
+      {
+        "label": "main",
+        "title": "Toney",
+        "width": 1440,
+        "height": 1000,
+        "minWidth": 900,
+        "minHeight": 650
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'",
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:5173 ws://127.0.0.1:5173; object-src 'none'; base-uri 'self'; frame-src 'none'"
     }
   },
-  "bundle": { "active": true, "targets": ["app"], "externalBin": ["binaries/toney-engine"], "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns"] }
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "externalBin": [
+      "binaries/toney-engine"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "toney"
+        ]
+      }
+    }
+  }
 }

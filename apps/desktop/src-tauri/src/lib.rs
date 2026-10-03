@@ -1,4 +1,5 @@
 mod assets;
+mod tone3000;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -678,16 +679,33 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(tone3000::Tone3000State::default())
         .invoke_handler(tauri::generate_handler![
             native_engine_request,
             native_export_file,
             native_render_audio,
             assets::native_import_asset,
             assets::native_list_assets,
+            tone3000::native_tone3000_select,
+            tone3000::native_tone3000_status,
+            tone3000::native_tone3000_cancel,
+            tone3000::native_tone3000_download,
             native_ollama_chat
         ])
-        .run(tauri::generate_context!())
-        .expect("Toney desktop failed to start");
+        .build(tauri::generate_context!())
+        .expect("Toney desktop failed to start")
+        .run(|app, event| {
+            // Handle OAuth links in Rust. The deep-link plugin's default event emitter
+            // broadcasts callback codes to webviews, so we use the native OS event.
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                for url in urls {
+                    tauri::async_runtime::spawn(tone3000::handle_callback(app.clone(), url));
+                }
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]
