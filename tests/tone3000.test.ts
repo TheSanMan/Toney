@@ -10,6 +10,15 @@ const descriptor: NativeAssetDescriptor = {
 };
 
 describe('TONE3000 local session contract', () => {
+  it('targets NAM pedals separately from amps and rejects contradictory target kinds', () => {
+    const request = createTone3000SelectRequest('nam', 'drive');
+    expect(request).toMatchObject({ kind: 'nam', target: 'drive' });
+    expect(validateTone3000Status(request, { protocolVersion: 1, requestId: request.requestId, status: 'ready', kind: 'nam', target: 'drive', selection })).toMatchObject({ target: 'drive' });
+    expect(() => createTone3000SelectRequest('ir', 'drive')).toThrow('cabinet IR');
+    expect(() => createTone3000SelectRequest('nam', 'cab')).toThrow('cabinet IR');
+    expect(() => validateTone3000Status(request, { ...request, status: 'ready', target: 'cab', selection })).toThrow('mismatched');
+    expect(() => validateTone3000Status(request, { ...request, status: 'idle' })).toThrow('mismatched');
+  });
   it('validates local authorization/loading/selection/error states and clears on idle', () => {
     const request = createTone3000Request();
     for (const status of ['authorizing', 'loading'] as const) expect(validateTone3000Status(request, { ...request, status, kind: 'nam' })).toMatchObject({ status, kind: 'nam' });

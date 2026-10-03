@@ -53,7 +53,7 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
     try {
       const imported = await importNativeAsset(kind, file);
       setAssets((current) => [...current.filter((item) => item.asset.id !== imported.asset.id), { asset: imported.asset, info: imported.info, ...(imported.source ? { source: imported.source } : {}) }]);
-      setStatus(`${imported.asset.name} imported. Select it for an amp or cabinet below.`);
+      setStatus(`${imported.asset.name} imported. Select it for a pedal, amp or cabinet below.`);
       onDiagnostic({ operation: 'asset-import', requestId: imported.requestId,
         durationMs: Math.round(performance.now() - start), result: { asset: imported.asset, info: imported.info } });
     } catch (reason) { reportError('asset-import', reason, start); }
@@ -70,7 +70,7 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
   }, []);
 
   return <section className="native-panel asset-panel">
-    <div className="native-heading"><div><span className="eyebrow">AMP MODELS & CABINET IRS</span>
+    <div className="native-heading"><div><span className="eyebrow">NAM AMPS & PEDALS · CABINET IRS</span>
       <p>{desktop ? 'Download community models or import captures, then use them in any rig.' : 'Open Toney desktop to download and hear NAM captures and cabinet IRs.'}</p></div>
       <span className="native-status">{working ? 'CHECKING ASSET…' : `${assets.length} LOCAL ASSETS`}</span>
     </div>
@@ -82,22 +82,22 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
       <button disabled={locked || working} onClick={() => irInput.current?.click()}>Import cabinet IR</button>
       <button disabled={locked || working} onClick={() => void refresh()}>Refresh library</button>
     </div>}
-    <div className="asset-selectors">{tone.chain.filter((node) => node.type === 'amp' || node.type === 'cab').map((node) => {
-      const kind = node.type === 'amp' ? 'nam' : 'ir';
+    <div className="asset-selectors">{tone.chain.filter((node) => node.type === 'drive' || node.type === 'amp' || node.type === 'cab').map((node) => {
+      const kind = node.type === 'cab' ? 'ir' : 'nam';
       const choices = assets.filter((item) => item.asset.kind === kind);
       const selected = choices.find((item) => item.asset.id === node.asset?.id);
       return <div className="asset-slot" key={node.id}>
-        <label htmlFor={`asset-${node.id}`}>{node.type === 'amp' ? 'Amp' : 'Cabinet'} model
+        <label htmlFor={`asset-${node.id}`}>{node.type === 'drive' ? 'Pedal' : node.type === 'amp' ? 'Amp' : 'Cabinet'} model
           <select id={`asset-${node.id}`} value={node.asset?.id ?? ''} disabled={locked || working}
             onChange={(event) => onSelect(node.id, choices.find((item) => item.asset.id === event.target.value)?.asset)}>
-            <option value="">{node.type === 'amp' ? 'Builtin preview amp' : 'Builtin cabinet filter'}</option>
+            <option value="">{node.type === 'drive' ? 'Builtin preview drive' : node.type === 'amp' ? 'Builtin preview amp' : 'Builtin cabinet filter'}</option>
             {node.asset && !selected && <option value={node.asset.id} disabled>Missing on this device · {node.asset.name}</option>}
             {choices.map((item) => <option key={item.asset.id} value={item.asset.id}>{item.asset.name}</option>)}
           </select>
         </label>
         <small>{selected ? describe(selected.info) : node.asset ? 'Reimport the same file to restore this reference, or select the builtin model.' : `${getNodeDefinition(node).name} · no imported file required`}</small>
         {selected?.source && <small>TONE3000 · {selected.source.toneName} · {selected.source.creator} · {selected.source.license}</small>}
-        {node.model === 'nam' && <small>Gain controls input trim; master controls output trim (−12 to +12 dB). Bass, mid and treble shape the captured sound with external EQ.</small>}
+        {node.model === 'nam' && <small>{node.type === 'drive' ? 'Input/output trims are −12 to +12 dB. Tone is post-capture EQ (−6 to +6 dB). First NAM pedal selection starts neutral; choose Builtin preview drive to compare, or bypass to hear the amp alone.' : 'Gain controls input trim; master controls output trim (−12 to +12 dB). Bass, mid and treble shape the captured sound with external EQ.'}</small>}
       </div>;
     })}</div>
     <p className="preview-note">NAM: classic mono WaveNet and LSTM captures, file version 0.5.0–0.5.4, up to 32 MiB. Cabinet IR: mono/stereo WAV, up to 2 seconds and 8 MiB. Presets reference files by content; importing a preset does not import its audio or model files.</p>

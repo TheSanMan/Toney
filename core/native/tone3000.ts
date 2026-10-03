@@ -3,12 +3,13 @@ import { validateNativeAssetDescriptor, validateTone3000SourceUrl, type NativeAs
 import { NativeError } from './protocol';
 
 export interface Tone3000Request { protocolVersion: 1; requestId: string }
-export interface Tone3000SelectRequest extends Tone3000Request { kind: AssetRef['kind'] }
+export type Tone3000Target = 'amp' | 'drive' | 'cab';
+export interface Tone3000SelectRequest extends Tone3000Request { kind: AssetRef['kind']; target: Tone3000Target }
 export interface Tone3000DownloadRequest extends Tone3000Request { modelId: number }
 export interface Tone3000Model { id: number; name: string }
 export interface Tone3000Selection { toneId: number; name: string; creator: string; license: string; url: string; models: Tone3000Model[] }
 export interface Tone3000Failure { code: string; message: string }
-export type Tone3000Status = Tone3000Request & (
+export type Tone3000Status = Tone3000Request & { target?: Tone3000Target } & (
   | { status: 'idle'; kind?: never; selection?: never; error?: never }
   | { status: 'authorizing' | 'loading'; kind: AssetRef['kind']; selection?: never; error?: never }
   | { status: 'ready'; kind: AssetRef['kind']; selection: Tone3000Selection; error?: never }
@@ -32,10 +33,11 @@ function kind(value: unknown): value is AssetRef['kind'] { return value === 'ir'
 export function createTone3000Request(): Tone3000Request {
   return { protocolVersion: 1, requestId: `tone3000_${crypto.randomUUID()}` };
 }
-export function createTone3000SelectRequest(assetKind: AssetRef['kind']): Tone3000SelectRequest {
+export function createTone3000SelectRequest(assetKind: AssetRef['kind'], target: Tone3000Target = assetKind === 'nam' ? 'amp' : 'cab'): Tone3000SelectRequest {
   const request = createTone3000Request();
   if (!kind(assetKind)) throw new NativeError('INVALID_TONE3000_REQUEST', 'Select NAM or IR.', request.requestId);
-  return { ...request, kind: assetKind };
+  if (!['amp', 'drive', 'cab'].includes(target) || (assetKind === 'ir') !== (target === 'cab')) throw new NativeError('INVALID_TONE3000_REQUEST', 'Select a NAM amp or pedal, or a cabinet IR.', request.requestId);
+  return { ...request, kind: assetKind, target };
 }
 export function createTone3000DownloadRequest(modelId: number): Tone3000DownloadRequest {
   const request = createTone3000Request();
@@ -59,24 +61,28 @@ function selection(input: unknown, requestId: string): Tone3000Selection {
 }
 
 export function validateTone3000Status(request: Tone3000Request, input: unknown): Tone3000Status {
-  const value = object(input, request.requestId, ['protocolVersion', 'requestId', 'status'], ['kind', 'selection', 'error']);
+  const value = object(input, request.requestId, ['protocolVersion', 'requestId', 'status'], ['kind', 'target', 'selection', 'error']);
   if (value.protocolVersion !== 1 || value.requestId !== request.requestId) return invalid(request.requestId);
   const base: Tone3000Request = { protocolVersion: 1, requestId: request.requestId };
+  if (Object.hasOwn(value, 'target')) {
+    if (!['amp', 'drive', 'cab'].includes(value.target as string) || !kind(value.kind) || (value.kind === 'ir') !== (value.target === 'cab')) return invalid(request.requestId);
+  }
+  const target = Object.hasOwn(value, 'target') ? { target: value.target as Tone3000Target } : {};
   switch (value.status) {
     case 'idle':
-      if (Object.hasOwn(value, 'kind') || Object.hasOwn(value, 'selection') || Object.hasOwn(value, 'error')) return invalid(request.requestId);
+      if (Object.hasOwn(value, 'kind') || Object.hasOwn(value, 'target') || Object.hasOwn(value, 'selection') || Object.hasOwn(value, 'error')) return invalid(request.requestId);
       return { ...base, status: 'idle' };
     case 'authorizing': case 'loading':
       if (!kind(value.kind) || Object.hasOwn(value, 'selection') || Object.hasOwn(value, 'error')) return invalid(request.requestId);
-      return { ...base, status: value.status, kind: value.kind };
+      return { ...base, ...target, status: value.status, kind: value.kind };
     case 'ready':
       if (!kind(value.kind) || Object.hasOwn(value, 'error')) return invalid(request.requestId);
-      return { ...base, status: 'ready', kind: value.kind, selection: selection(value.selection, request.requestId) };
+      return { ...base, ...target, status: 'ready', kind: value.kind, selection: selection(value.selection, request.requestId) };
     case 'error': {
       if ((Object.hasOwn(value, 'kind') && !kind(value.kind)) || Object.hasOwn(value, 'selection')) return invalid(request.requestId);
       const error = object(value.error, request.requestId, ['code', 'message']);
       if (!text(error.code) || !text(error.message, 2000)) return invalid(request.requestId);
-      return { ...base, status: 'error', ...(kind(value.kind) ? { kind: value.kind } : {}), error: { code: error.code, message: error.message } };
+      return { ...base, ...target, status: 'error', ...(kind(value.kind) ? { kind: value.kind } : {}), error: { code: error.code, message: error.message } };
     }
     default: return invalid(request.requestId);
   }

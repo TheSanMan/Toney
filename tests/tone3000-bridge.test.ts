@@ -8,6 +8,19 @@ vi.mock('@tauri-apps/api/core', () => tauri);
 beforeEach(() => { tauri.invoke.mockReset(); tauri.isTauri.mockReturnValue(true); });
 
 describe('TONE3000 desktop bridge', () => {
+  it('correlates the pedal target independently from its NAM asset kind', async () => {
+    tauri.invoke.mockImplementation(async (_command, args) => {
+      const { request } = args as { request: Tone3000SelectRequest };
+      expect(request.target).toBe('drive');
+      return { ...request, status: 'authorizing' };
+    });
+    expect(await selectTone3000('nam', 'drive')).toMatchObject({ target: 'drive', kind: 'nam' });
+    tauri.invoke.mockImplementation(async (_command, args) => {
+      const { request } = args as { request: Tone3000SelectRequest };
+      return { ...request, status: 'authorizing', target: 'amp' };
+    });
+    await expect(selectTone3000('nam', 'drive')).rejects.toMatchObject({ code: 'INVALID_NATIVE_RESPONSE' });
+  });
   it('keeps selection and status requests inside the local native session', async () => {
     tauri.invoke.mockImplementation(async (command, args) => {
       const { request } = args as { request: Tone3000SelectRequest };

@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
+    net::{IpAddr, SocketAddr},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -29,6 +30,7 @@ struct Session {
     generation: u64,
     phase: Phase,
     kind: Option<AssetKind>,
+    target: Option<Target>,
     pending: Option<Pending>,
     tokens: Option<Tokens>,
     selection: Option<Selection>,
@@ -43,6 +45,29 @@ enum Phase {
     Loading,
     Ready,
     Error,
+}
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Target {
+    Amp,
+    Drive,
+    Cab,
+}
+impl Target {
+    fn kind(self) -> AssetKind {
+        if self == Self::Cab {
+            AssetKind::Ir
+        } else {
+            AssetKind::Nam
+        }
+    }
+    fn gear(self) -> &'static str {
+        match self {
+            Self::Amp => "amp",
+            Self::Drive => "pedal",
+            Self::Cab => "cab",
+        }
+    }
 }
 struct Pending {
     state: String,
@@ -86,6 +111,7 @@ struct SelectRequest {
     protocol_version: u32,
     request_id: String,
     kind: AssetKind,
+    target: Option<Target>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -160,6 +186,9 @@ fn status(session: &mut Session, request_id: &str) -> Value {
     if let Some(kind) = session.kind {
         output["kind"] = json!(kind);
     }
+    if let Some(target) = session.target {
+        output["target"] = json!(target);
+    }
     if let Some(selection) = &session.selection {
         output["selection"] = json!(selection);
     }
@@ -178,7 +207,8 @@ fn random() -> Result<String, NativeError> {
     })?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
-fn authorization(kind: AssetKind) -> Result<(Url, Pending), NativeError> {
+fn authorization(target: Target) -> Result<(Url, Pending), NativeError> {
+    let kind = target.kind();
     let verifier = random()?;
     let pending = Pending {
         state: random()?,
@@ -199,7 +229,7 @@ fn authorization(kind: AssetKind) -> Result<(Url, Pending), NativeError> {
         ("prompt", "select_tone"),
         ("menubar", "true"),
         ("preview", "true"),
-        ("gears", if kind == AssetKind::Nam { "amp" } else { "cab" }),
+        ("gears", target.gear()),
         ("format", if kind == AssetKind::Nam { "nam" } else { "ir" }),
     ]);
     if kind == AssetKind::Nam {
@@ -214,7 +244,19 @@ pub(super) async fn native_tone3000_select(
 ) -> Result<Value, NativeError> {
     let request: SelectRequest = decode(request)?;
     validate_request(request.protocol_version, &request.request_id)?;
-    let (url, pending) = authorization(request.kind)?;
+    let target = request.target.unwrap_or(if request.kind == AssetKind::Nam {
+        Target::Amp
+    } else {
+        Target::Cab
+    });
+    if target.kind() != request.kind {
+        return Err(failure(
+            "TONE3000_TARGET_INVALID",
+            "Select a NAM amp or pedal, or a cabinet IR.",
+            Some(&request.request_id),
+        ));
+    }
+    let (url, pending) = authorization(target)?;
     let generation = {
         let state = app.state::<Tone3000State>();
         let mut session = lock(&state)?;
@@ -233,6 +275,7 @@ pub(super) async fn native_tone3000_select(
             generation,
             phase: Phase::Authorizing,
             kind: Some(request.kind),
+            target: Some(target),
             pending: Some(pending),
             ..Session::default()
         };
@@ -363,7 +406,7 @@ fn callback(url: &Url) -> Result<Callback, NativeError> {
 }
 struct AuthorizationGrant {
     generation: u64,
-    kind: AssetKind,
+    target: Target,
     code: String,
     verifier: String,
     tone_id: u64,
@@ -397,7 +440,11 @@ fn consume_callback(
     session.phase = Phase::Loading;
     Ok(Some(AuthorizationGrant {
         generation: session.generation,
-        kind,
+        target: session.target.unwrap_or(if kind == AssetKind::Nam {
+            Target::Amp
+        } else {
+            Target::Cab
+        }),
         code: returned.code.expect("checked code"),
         verifier: pending.verifier,
         tone_id: returned.tone_id.expect("checked tone id"),
@@ -439,6 +486,168 @@ fn delivery_url(value: &str) -> Result<Url, NativeError> {
         return Err(error("TONE3000_URL_UNSUPPORTED", "This download address is outside the supported TONE3000 API. Choose another model or report this error."));
     }
     Ok(url)
+}
+// The selected API endpoint may delegate file delivery to signed storage URLs.
+// Follow that delegation without sharing the account bearer credential. Resolve
+// and pin public addresses for every delegated hop before making a connection.
+fn redirect_url(current: &Url, location: &str) -> Result<Url, NativeError> {
+    let invalid = || {
+        error(
+            "TONE3000_REDIRECT_INVALID",
+            "TONE3000 returned an unsafe file redirect. Choose another model or report this error.",
+        )
+    };
+    if location.len() > 8192
+        || location.trim() != location
+        || location.chars().any(char::is_control)
+    {
+        return Err(invalid());
+    }
+    let url = current.join(location).map_err(|_| invalid())?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.host(), Some(url::Host::Domain(_)))
+    {
+        return Err(invalid());
+    }
+    Ok(url)
+}
+fn public_delivery_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, c, _] = ip.octets();
+            !(a == 0
+                || a == 10
+                || a == 127
+                || a >= 224
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 169 && b == 254)
+                || (a == 172 && (16..=31).contains(&b))
+                || (a == 192 && (b == 168 || (b == 0 && (c == 0 || c == 2))))
+                || (a == 198 && (b == 18 || b == 19 || (b == 51 && c == 100)))
+                || (a == 203 && b == 0 && c == 113))
+        }
+        IpAddr::V6(ip) => {
+            let words = ip.segments();
+            // Accept global unicast only, excluding documentation and reserved
+            // protocol assignments (also excludes mapped/local IPv4 addresses).
+            words[0] & 0xe000 == 0x2000
+                && !(words[0] == 0x2001 && (words[1] < 0x0200 || words[1] == 0x0db8))
+        }
+    }
+}
+async fn delivery_client(url: &Url) -> Result<reqwest::Client, NativeError> {
+    let host = url.host_str().expect("validated redirect host");
+    let resolved = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::net::lookup_host((host, 443)),
+    )
+    .await
+    .map_err(|_| {
+        error(
+            "TONE3000_NETWORK_FAILED",
+            "File delivery address lookup timed out. Try again.",
+        )
+    })?
+    .map_err(|_| {
+        error(
+            "TONE3000_NETWORK_FAILED",
+            "Cannot resolve the file delivery address. Check your connection.",
+        )
+    })?;
+    let mut addresses: Vec<SocketAddr> = resolved.collect();
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| !public_delivery_ip(address.ip()))
+    {
+        return Err(error(
+            "TONE3000_REDIRECT_INVALID",
+            "File delivery resolved to an unsupported network address.",
+        ));
+    }
+    addresses.sort_unstable();
+    addresses.dedup();
+    reqwest::Client::builder()
+        .https_only(true)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(host, &addresses)
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|_| {
+            error(
+                "TONE3000_NETWORK_FAILED",
+                "Cannot initialize file delivery.",
+            )
+        })
+}
+fn model_request(
+    client: &reqwest::Client,
+    url: Url,
+    access: &str,
+    bearer_allowed: bool,
+) -> reqwest::RequestBuilder {
+    let request = client.get(url.clone());
+    if bearer_allowed && delivery_url(url.as_str()).is_ok() {
+        request.bearer_auth(access)
+    } else {
+        request
+    }
+}
+async fn model_response(
+    client: &reqwest::Client,
+    access: &str,
+    value: &str,
+) -> Result<reqwest::Response, NativeError> {
+    let mut url = delivery_url(value)?;
+    let mut bearer_allowed = true;
+    for hop in 0..=3 {
+        let delegated;
+        let transport = if hop == 0 {
+            client
+        } else {
+            delegated = delivery_client(&url).await?;
+            &delegated
+        };
+        let response = model_request(transport, url.clone(), access, bearer_allowed)
+            .send()
+            .await
+            .map_err(|_| {
+                error(
+                    "TONE3000_NETWORK_FAILED",
+                    "Cannot download this model. Check your connection and try again.",
+                )
+            })?;
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Ok(response);
+        }
+        if hop == 3 {
+            return Err(error(
+                "TONE3000_REDIRECT_LIMIT",
+                "File delivery redirected too many times. Try another model.",
+            ));
+        }
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| {
+                error(
+                    "TONE3000_REDIRECT_INVALID",
+                    "File delivery returned no valid redirect address.",
+                )
+            })?;
+        let next = redirect_url(&url, location)?;
+        bearer_allowed = bearer_allowed && delivery_url(next.as_str()).is_ok();
+        url = next;
+    }
+    unreachable!("bounded redirect loop returns")
 }
 fn http_status(status: reqwest::StatusCode) -> Result<(), NativeError> {
     if status.is_success() {
@@ -604,19 +813,20 @@ fn safe_text(value: &Value, field: &str) -> Result<String, NativeError> {
 }
 fn parse_selection(
     tone_id: u64,
-    kind: AssetKind,
+    target: Target,
     tone: Value,
     models: Value,
 ) -> Result<Selection, NativeError> {
+    let kind = target.kind();
     let format = if kind == AssetKind::Nam { "nam" } else { "ir" };
-    let gear = if kind == AssetKind::Nam { "amp" } else { "cab" };
+    let gear = target.gear();
     if tone.get("id").and_then(Value::as_u64) != Some(tone_id)
         || tone.get("format").and_then(Value::as_str) != Some(format)
         || tone.get("gear").and_then(Value::as_str) != Some(gear)
     {
         return Err(error(
             "TONE3000_MODEL_INCOMPATIBLE",
-            "Choose an amp NAM A1 capture or cabinet IR matching this signal block.",
+            "Choose a NAM A1 amp/pedal capture or cabinet IR matching this signal block.",
         ));
     }
     let name = safe_text(&tone, "title")?;
@@ -699,9 +909,10 @@ fn parse_selection(
 async fn fetch_selection(
     client: &reqwest::Client,
     tokens: &Tokens,
-    kind: AssetKind,
+    target: Target,
     tone_id: u64,
 ) -> Result<Selection, NativeError> {
+    let kind = target.kind();
     let tone = json_request(
         client
             .get(format!("{API}/tones/{tone_id}"))
@@ -718,7 +929,7 @@ async fn fetch_selection(
         url.query_pairs_mut().append_pair("architecture", "1");
     }
     let models = json_request(client.get(url).bearer_auth(&tokens.access)).await?;
-    parse_selection(tone_id, kind, tone, models)
+    parse_selection(tone_id, target, tone, models)
 }
 pub(super) async fn handle_callback(app: tauri::AppHandle, url: Url) {
     let Ok(returned) = callback(&url) else {
@@ -736,7 +947,7 @@ pub(super) async fn handle_callback(app: tauri::AppHandle, url: Url) {
     };
     let Some(AuthorizationGrant {
         generation,
-        kind,
+        target,
         code,
         verifier,
         tone_id,
@@ -747,7 +958,7 @@ pub(super) async fn handle_callback(app: tauri::AppHandle, url: Url) {
     let result = async {
         let client = client()?;
         let tokens = exchange(&client, &code, &verifier).await?;
-        let selection = fetch_selection(&client, &tokens, kind, tone_id).await?;
+        let selection = fetch_selection(&client, &tokens, target, tone_id).await?;
         Ok::<_, NativeError>((tokens, selection))
     }
     .await;
@@ -849,17 +1060,17 @@ pub(super) async fn native_tone3000_download(
             }
             session.tokens = Some(tokens.clone());
         }
-        let response = client
-            .get(delivery_url(&model.download_url)?)
-            .bearer_auth(&tokens.access)
-            .send()
-            .await
-            .map_err(|_| {
-                error(
-                    "TONE3000_NETWORK_FAILED",
-                    "Cannot download this model. Check your connection and try again.",
-                )
-            })?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(90),
+            model_response(&client, &tokens.access, &model.download_url),
+        )
+        .await
+        .map_err(|_| {
+            error(
+                "TONE3000_NETWORK_FAILED",
+                "File delivery timed out. Try again.",
+            )
+        })??;
         let bytes = response_bytes(response, kind.limit()).await?;
         {
             let state = app.state::<Tone3000State>();
@@ -929,7 +1140,7 @@ mod tests {
     use super::*;
 
     fn pending_session() -> Session {
-        let (_, pending) = authorization(AssetKind::Nam).unwrap();
+        let (_, pending) = authorization(Target::Amp).unwrap();
         Session {
             generation: 4,
             kind: Some(AssetKind::Nam),
@@ -952,8 +1163,8 @@ mod tests {
     }
     #[test]
     fn pkce_is_random_and_catalog_constraints_match_engine_target() {
-        let (amp, pending) = authorization(AssetKind::Nam).unwrap();
-        let (_, other) = authorization(AssetKind::Nam).unwrap();
+        let (amp, pending) = authorization(Target::Amp).unwrap();
+        let (_, other) = authorization(Target::Amp).unwrap();
         assert_ne!(pending.state, other.state);
         assert_ne!(pending.verifier, other.verifier);
         assert_eq!(pending.verifier.len(), 43);
@@ -969,7 +1180,7 @@ mod tests {
         assert_eq!(query["architecture"], "1");
         assert_eq!(query["gears"], "amp");
         assert!(!amp.as_str().contains(&pending.verifier));
-        let (cab, _) = authorization(AssetKind::Ir).unwrap();
+        let (cab, _) = authorization(Target::Cab).unwrap();
         let cab_query: BTreeMap<_, _> = cab.query_pairs().collect();
         assert_eq!(cab_query.get("format").unwrap(), "ir");
         assert_eq!(cab_query.get("gears").unwrap(), "cab");
@@ -1049,29 +1260,125 @@ mod tests {
         );
     }
     #[test]
+    fn signed_storage_redirects_drop_account_credentials() {
+        let initial = delivery_url("https://www.tone3000.com/api/v1/models/34/download").unwrap();
+        let storage = redirect_url(
+            &initial,
+            "https://storage.example.com/models/34.nam?signature=fixture-signed-value",
+        )
+        .unwrap();
+        let api = client().unwrap();
+        let authenticated = model_request(&api, initial.clone(), "fixture-secret", true)
+            .build()
+            .unwrap();
+        assert_eq!(
+            authenticated.headers()[reqwest::header::AUTHORIZATION],
+            "Bearer fixture-secret"
+        );
+        let delegated = model_request(&api, storage, "fixture-secret", true)
+            .build()
+            .unwrap();
+        assert!(!delegated
+            .headers()
+            .contains_key(reqwest::header::AUTHORIZATION));
+        // Returning to the API after delegation never reattaches the bearer token.
+        let returned = model_request(&api, initial.clone(), "fixture-secret", false)
+            .build()
+            .unwrap();
+        assert!(!returned
+            .headers()
+            .contains_key(reqwest::header::AUTHORIZATION));
+        let same_origin = redirect_url(&initial, "/api/v1/models/34/file.nam").unwrap();
+        assert!(delivery_url(same_origin.as_str()).is_ok());
+        for target in [
+            "http://storage.example.com/model",
+            "https://user:password@storage.example.com/model",
+            "https://storage.example.com:444/model",
+            "https://127.0.0.1/model",
+            "https://[::1]/model",
+            "https://storage.example.com/model#fragment",
+            "\nhttps://storage.example.com/model",
+        ] {
+            let failure = redirect_url(&initial, target).unwrap_err();
+            let public = serde_json::to_string(&failure).unwrap();
+            assert!(!public.contains("password"));
+            assert!(!public.contains("signature"));
+        }
+    }
+    #[test]
+    fn delegated_downloads_cannot_reach_private_or_reserved_networks() {
+        for address in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.2",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "198.18.0.1",
+            "192.0.2.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "2001:db8::1",
+        ] {
+            assert!(
+                !public_delivery_ip(address.parse().unwrap()),
+                "accepted {address}"
+            );
+        }
+        for address in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"] {
+            assert!(public_delivery_ip(address.parse().unwrap()));
+        }
+        let localhost = Url::parse("https://localhost/model.nam").unwrap();
+        let failure = tauri::async_runtime::block_on(delivery_client(&localhost))
+            .err()
+            .unwrap();
+        assert_eq!(failure.code, "TONE3000_REDIRECT_INVALID");
+    }
+    #[test]
     fn selected_models_match_tone_and_only_compatible_variants_enter_public_status() {
         let (tone, models) = metadata();
-        let selected = parse_selection(12, AssetKind::Nam, tone.clone(), models.clone()).unwrap();
+        let selected = parse_selection(12, Target::Amp, tone.clone(), models.clone()).unwrap();
         let public = serde_json::to_string(&selected).unwrap();
         assert!(!public.contains("download"));
         assert!(public.contains("creator"));
         assert!(public.contains("cc-by"));
         let mut wrong = models.clone();
         wrong["data"][0]["tone_id"] = json!(99);
-        assert!(parse_selection(12, AssetKind::Nam, tone.clone(), wrong).is_err());
+        assert!(parse_selection(12, Target::Amp, tone.clone(), wrong).is_err());
         let mut advanced = models.clone();
         advanced["data"][0]["architecture_version"] = json!("2");
-        assert!(parse_selection(12, AssetKind::Nam, tone.clone(), advanced).is_err());
+        assert!(parse_selection(12, Target::Amp, tone.clone(), advanced).is_err());
         let mut duplicate = models.clone();
         duplicate["data"]
             .as_array_mut()
             .unwrap()
             .push(models["data"][0].clone());
-        assert!(parse_selection(12, AssetKind::Nam, tone.clone(), duplicate).is_err());
+        assert!(parse_selection(12, Target::Amp, tone.clone(), duplicate).is_err());
         let mut unsafe_url = models;
         unsafe_url["data"][0]["model_url"] = json!("https://evil.test/model");
-        assert!(parse_selection(12, AssetKind::Nam, tone.clone(), unsafe_url).is_err());
-        assert!(parse_selection(12, AssetKind::Ir, tone, json!({"data":[]})).is_err());
+        assert!(parse_selection(12, Target::Amp, tone.clone(), unsafe_url).is_err());
+        assert!(parse_selection(12, Target::Cab, tone, json!({"data":[]})).is_err());
+    }
+    #[test]
+    fn pedal_browsing_and_metadata_are_bound_to_the_drive_target() {
+        let (url, _) = authorization(Target::Drive).unwrap();
+        let query: BTreeMap<_, _> = url.query_pairs().collect();
+        assert_eq!(query.get("gears").unwrap(), "pedal");
+        assert_eq!(query.get("format").unwrap(), "nam");
+        assert_eq!(query.get("architecture").unwrap(), "1");
+        let (mut tone, models) = metadata();
+        assert!(parse_selection(12, Target::Drive, tone.clone(), models.clone()).is_err());
+        tone["gear"] = json!("pedal");
+        assert!(parse_selection(12, Target::Drive, tone.clone(), models.clone()).is_ok());
+        assert!(parse_selection(12, Target::Amp, tone, models).is_err());
+        let mut session = pending_session();
+        session.target = Some(Target::Drive);
+        assert_eq!(status(&mut session, "fixture")["target"], "drive");
     }
     #[test]
     fn bounded_responses_and_tokens_cannot_leak_through_status_or_errors() {
