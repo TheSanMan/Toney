@@ -132,3 +132,29 @@ Implemented and verified on 2026-10-03 (America/Chicago):
 Limits: offline processing only; no live guitar stream, realtime latency claim, advanced/conditioned NAM architecture support, stereo expansion, or listening-quality judgment from real guitar recordings. Native GUI/save-dialog/WKWebView import/playback and packaged Ollama interaction remain unverified because Computer Use permissions were unavailable. Official macOS setup guidance was provided to the user; headless tests and bundled-helper artifacts do not establish GUI acceptance. The bundle is for local development, not a signed/notarized release.
 
 Checkpoint pause: open the rebuilt Toney.app, import your supported `.nam` and cabinet `.wav`, select them, import a clean DI, choose Native DSP + NAM / IR, render/play/export and compare bypass/builtin processing. Alternatively use `npm run native:models -- /absolute/capture.nam /absolute/cab.wav /absolute/clean-di.wav` for audible artifacts without GUI automation. NAM integration is complete at this checkpoint; realtime input remains the next separate component. Hosted CI status is recorded after pushing.
+
+## 007 — TONE3000 selection and local model delivery
+
+Implemented for the personal prototype on 2026-10-03 (America/Chicago):
+
+- Embedded the supplied publishable application identifier; no secret API key is needed or stored.
+- Native OAuth PKCE S256 with secure random state, a ten-minute pending selection, exact callback destination/field checks, single-use code handling, and cancellation/generation checks.
+- macOS `toney://tone3000/callback` scheme registered in the app bundle. Native OS URL events handle callbacks without broadcasting OAuth codes to the frontend.
+- Hosted browsing/audition through `select_tone`: amp/NAM/A1 and cabinet/IR filters. Only the selected tone and up to 128 variants are fetched; each file download requires an explicit user action.
+- Session tokens stay in Rust memory, with proactive refresh before an expired-token download. Closing the selection disconnects locally; restarting requires reconnection. Installed files persist offline.
+- HTTPS fixed-origin API transport, no proxies or redirects, bounded streamed responses, sanitized errors, and no account credentials or delivery URLs in frontend responses/traces. An undocumented file redirect fails explicitly rather than forwarding credentials.
+- Downloads pass the real helper's existing asset inspection before SHA-256 content-addressed installation. Creator, license, tone/model IDs, title and source page survive library reopening and identical-content local reimport.
+- Desktop controls show the selected pack and model variants, download status, stable errors/request IDs, and persisted attribution beside loaded amp/cabinet selectors. Downloads add to the library; applying to a rig remains an explicit choice.
+- Official unmodified TONE3000 full logo, README instructions, third-party notices and ADR 005. The browser harness shows a desktop requirement for account/download actions.
+
+Verification:
+
+- `npm run check`: ESLint, strict TypeScript, 80 tests in 13 files, and production build passed. Includes strict native envelopes, rejected secret/download fields, request correlation, malformed provider metadata, and bridge errors.
+- Rust tests: 29 passed, including real NAM/IR helper import-render tests, callback replay/state/expiry/cancellation, PKCE/catalog constraints, delivery-origin restrictions, bounded byte accumulation, token exclusion and durable provenance. Formatting and Clippy with warnings denied passed.
+- Local macOS development bundle rebuilt successfully (56.16 MiB). Inspected its actual Info.plist: `CFBundleURLTypes` contains `toney`; the bundled helper retains SHA-256 `8a3b8c2d363051285fc9489128fb23cd9ec7c7b55bf7bf2582f340045bdc1727`. Official logo present in the production web build.
+- Browser review at narrow panel width confirmed the new controls, explicit desktop restriction, persisted missing-asset behavior and correctly loaded official SVG. Screenshot: `/private/tmp/toney-tone3000-panel.png`.
+- Live account authorization, OS callback delivery, and a production TONE3000 file download remain unverified. These require the user to sign in and select a tone in the rebuilt desktop app. Unit fixtures are not live API evidence. Native GUI automation remains unverified after the previously reported macOS Computer Use permission block.
+
+Checkpoint pause: open `apps/desktop/src-tauri/target/debug/bundle/macos/Toney.app`; choose **Browse amp models**, sign in on TONE3000, select a capture, then **Download to local library**. Choose the downloaded entry under **Amp model**, select **Native DSP + NAM / IR**, and **Hear this rig**. Repeat with **Browse cabinet IRs**. If restricted redirect URIs are configured on TONE3000, add `toney://tone3000/callback`. Record any error code/request ID from the panel or diagnostic export.
+
+Remaining limits: classic NAM A1 file support only; no NAM pedal block or A2 runtime, no live guitar stream, session-only sign-in, and no public/commercial integration sign-off. Full production tone artwork/avatar/detail presentation is a later UI checkpoint; downloaded capture rights remain governed by each creator's license. If real delivery uses a CDN redirect, verify and support its actual origin before declaring live download acceptance complete.
