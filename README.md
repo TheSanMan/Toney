@@ -118,3 +118,13 @@ Later work adds audio analysis, candidate search, reference matching, preference
 Core generation and audio preview run locally. Optional model inference must use an explicitly selected local provider. Audio recordings are not uploaded. Diagnostic exports include prompts and rigs, so keep them private as appropriate. Network research is a later, opt-in capability.
 
 The original [product proposal](docs/product-proposal.md) is preserved for reference. The current checkpoint follows the requested agent-first order; live input, audio analysis and distribution remain outstanding.
+
+### Audition imported models without the GUI
+
+```sh
+npm run native:models
+# Or use your actual captures and optional clean DI WAV:
+npm run native:models -- /absolute/capture.nam /absolute/cab.wav /absolute/clean-di.wav
+```
+
+The command writes dry, bypass, NAM, IR and combined WAVs plus matching presets into a unique ignored build folder. With no arguments it uses a licensed upstream neural test fixture and a synthetic IR: these test loading and inference, not guitar amp quality. The paths printed by the command let you open the comparisons in a player or import the copied assets and preset into Toney.

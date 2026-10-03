@@ -157,7 +157,7 @@ describe.skipIf(!existsSync(executable))('Native offline WAV rendering', () => {
     expect(artifact).toMatchObject({ sampleRate: result.sampleRate, channels: result.channels, frames: result.outputFrames });
     expect(Math.abs(artifact.peak - result.peak)).toBeLessThanOrEqual(0.0001);
     expect(result).toMatchObject({
-      engineVersion: '0.3.0', toneId: tone.id, revision: tone.revision,
+      engineVersion: '0.5.0', toneId: tone.id, revision: tone.revision,
       sampleRate: wav.sampleRate, channels: wav.channels,
       inputFrames: original.frames, outputFrames: wav.frames,
     });
