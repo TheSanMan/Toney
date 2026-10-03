@@ -68,8 +68,8 @@ int main()
     const auto info = run(request("get_engine_info"));
     expect(static_cast<bool>(info["ok"]), "engine info succeeds");
     expect(info["result"]["backend"].toString() == "JUCE", "native backend disclosed");
-    expect(info["result"]["engineVersion"].toString() == "0.4.0", "engine version");
-    expect(info["result"]["capabilities"].getArray()->size() == 4, "only implemented capabilities advertised");
+    expect(info["result"]["engineVersion"].toString() == "0.5.0", "engine version");
+    expect(info["result"]["capabilities"].getArray()->size() == 5, "only implemented capabilities advertised");
 
     const auto valid = run(request("validate_tone_spec", fixture()));
     expect(static_cast<bool>(valid["ok"]), "full catalog fixture accepted");

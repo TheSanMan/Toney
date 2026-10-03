@@ -122,7 +122,7 @@ int main()
         const auto identityOutput = uniqueFile();
         const auto identity = toney::renderAudio(bypass(), options(input, identityOutput));
         const auto identityDecoded = toney::readWave(identityOutput);
-        expect(identity["kind"].toString() == "audio-render" && identity["engineVersion"].toString() == "0.4.0", "discriminated render metadata/version");
+        expect(identity["kind"].toString() == "audio-render" && identity["engineVersion"].toString() == "0.5.0", "discriminated render metadata/version");
         expect(static_cast<int>(identity["inputFrames"]) == source.getNumSamples() && static_cast<int>(identity["outputFrames"]) == source.getNumSamples(), "bypass has exact source/end frame count");
         expect(static_cast<double>(identity["attenuationDb"]) == 0, "quiet recording is never boosted");
         expect(difference(decoded.samples, identityDecoded.samples, source.getNumSamples()) < 2e-9, "bypass preserves source identity and stereo balance");

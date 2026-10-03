@@ -1,6 +1,7 @@
 #include "EffectProcessing.h"
 #include "Protocol.h"
 #include "Assets.h"
+#include "NamModel.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
 #include <array>
@@ -205,7 +206,18 @@ void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const 
             filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(145, sampleRate), 1.1f, juce::Decibels::decibelsToGain(static_cast<float>(parameter(node, "resonance") * 5))));
             filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(3200, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "brightness") - 0.5) * 12))));
         }
-        else if (node["model"].toString() == "nam") throw ControlError("ASSET_UNSUPPORTED", "Neural processing is unavailable in this milestone.");
+        else if (node["model"].toString() == "nam")
+        {
+            if (assets == nullptr) throw ControlError("ASSET_MISSING", "Neural amp model is unavailable.");
+            const auto& definition = assets->get(node["asset"]["id"].toString()).neural;
+            if (!definition) throw ControlError("ASSET_INVALID", "Neural amp requires a NAM model asset.");
+            samples.applyGain(juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "gain") - 0.5) * 24)));
+            processNam(samples, sampleRate, *definition);
+            filter(samples, Coefficients::makeLowShelf(sampleRate, frequency(180, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "bass") - 0.5) * 20))));
+            filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(850, sampleRate), 0.8f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "mid") - 0.5) * 18))));
+            filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2600, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "treble") - 0.5) * 20))));
+            samples.applyGain(juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "master") - 0.5) * 24)));
+        }
         else if (type == "compressor") compress(samples, sampleRate, node);
         else if (type == "drive")
         {

@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
-project(ToneyEngine VERSION 0.4.0 LANGUAGES C CXX)
+project(ToneyEngine VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+include(cmake/NamCore.cmake)
 
 set(JUCE_PATH "" CACHE PATH "Optional checkout of official JUCE 8.0.14")
 if(JUCE_PATH)
@@ -27,15 +28,17 @@ add_library(toney-engine-control STATIC
   src/Assets.cpp
   src/ImpulseProcessing.cpp
   src/Resampling.cpp
+  src/NamValidation.cpp
+  src/NamProcessing.cpp
   src/DeviceInventory.cpp)
 target_include_directories(toney-engine-control PUBLIC src "${JUCE_SOURCE_DIR}/modules")
-target_link_libraries(toney-engine-control PRIVATE juce::juce_audio_devices juce::juce_audio_formats juce::juce_dsp juce::juce_cryptography)
+target_link_libraries(toney-engine-control PRIVATE juce::juce_audio_devices juce::juce_audio_formats juce::juce_dsp juce::juce_cryptography PUBLIC toney-nam-core)
 target_compile_definitions(toney-engine-control PUBLIC
   JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
   JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
   JUCE_USE_FLAC=0 JUCE_USE_OGGVORBIS=0 JUCE_USE_MP3AUDIOFORMAT=0
   JUCE_APPLICATION_NAME_STRING="ToneyEngine"
-  JUCE_APPLICATION_VERSION_STRING="0.4.0")
+  JUCE_APPLICATION_VERSION_STRING="0.5.0")
 
 add_executable(toney-engine src/Main.cpp)
 target_link_libraries(toney-engine PRIVATE toney-engine-control)
@@ -52,4 +55,8 @@ if(BUILD_TESTING)
   add_executable(toney-asset-tests tests/AssetTests.cpp)
   target_link_libraries(toney-asset-tests PRIVATE toney-engine-control)
   add_test(NAME native-assets COMMAND toney-asset-tests)
+  add_executable(toney-nam-tests tests/NamTests.cpp)
+  target_link_libraries(toney-nam-tests PRIVATE toney-engine-control)
+  target_compile_definitions(toney-nam-tests PRIVATE TONEY_NAM_FIXTURES="${TONEY_NAM_SOURCE}/example_models")
+  add_test(NAME native-neural-models COMMAND toney-nam-tests)
 endif()

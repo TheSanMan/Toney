@@ -1,5 +1,7 @@
 # Native engine control helper
 
+The JUCE 8.0.14 C++17 helper provides real device enumeration, independent ToneSpec validation, deterministic offline WAV rendering through all eight built-in effects, imported cabinet IR convolution, and official NAM neural inference. Device queries scan names/defaults without opening audio streams. Rendering processes files without audio hardware. Realtime guitar input remains a later checkpoint.
+
 ## Asset schema and cabinet IRs
 
 Schema 1 retains built-in rigs. Schema 2 adds optional node `asset:{id,kind,name}` references, where `id` is the lowercase SHA-256 of the file bytes. `cab_ir` on a cabinet requires `kind:"ir"`; `nam` on an amp requires `kind:"nam"`. Built-in models forbid asset fields. Bypassed asset nodes need no staged file; every enabled reference must resolve to a supplied, hash-verified file. Missing or corrupt assets fail without a substitute sound.
@@ -10,7 +12,19 @@ IR inputs must be audible finite mono/stereo WAV, 8000–96000 Hz, at most two s
 
 Asset errors use `ASSET_INVALID`, `ASSET_UNSUPPORTED`, `ASSET_MISSING`, and `ASSET_CORRUPT` with actionable sanitized messages.
 
-The JUCE 8.0.14 C++17 helper provides real device enumeration, independent ToneSpec validation, and deterministic offline WAV rendering through all eight built-in effects. Device queries scan names/defaults without opening input or output streams. Rendering processes a file without audio hardware; these approximate effects do not implement NAM models, measured cabinet IRs, or realtime guitar input.
+## Neural amp models
+
+The native helper compiles actual official NeuralAmpModelerCore v0.3.0 inference, pinned at `e5cc355746866bed85cd48ab3e92513dc8cf7a8b`. Eigen is pinned to its official submodule `87300c93cae6a8afd9a4f8aa8d9d5c5324cf02e1`; nlohmann/json 3.12.0 is the single header included in that NAM commit. CMake fetches them into the ignored build directory. For an existing checkout, use `NAM_PATH=/absolute/path/to/NeuralAmpModelerCore`; it must be at that commit with `git submodule update --init Dependencies/eigen` completed. The build verifies both Git revisions and enables `EIGEN_MPL2_ONLY`. Upstream source trees and generated bundles are not committed. See `THIRD_PARTY_NOTICES.md` for license notices.
+
+Supported `.nam` file versions are exactly **0.5.0 through 0.5.4**, with classic mono **WaveNet A1** or **LSTM** architectures. Newer A2, conditioned, multi-IO, output-head, slimmable, and other configurations fail with a clear unsupported-model error. There is no substitute saturation curve when a model cannot load. These limits describe Toney's current integration, not the full range of upstream NAM models.
+
+Models must be at most 32 MiB, contain finite numeric weights/configuration, and provide the exact weight count implied by their dimensions. Preflight occurs before the upstream constructors iterate weights. JSON nesting is capped at 64 levels and parse events at 2.2 million; weight and executable configuration magnitudes are bounded at one million, with at most two million weights. WaveNet supports 1–4 arrays, up to 32 channels/32 total dilated layers, kernels 1–8, receptive fields up to 16384 samples, and calculated working buffers up to 128 MiB. It checks matching array transitions, mono input/output, recognized activations, and boolean gating/bias fields. LSTM supports mono input, 1–4 layers, and hidden sizes 1–128. Unknown advanced configuration fields, duplicate JSON fields, and unsafe counts are rejected. Inspection initializes and prewarms the model and checks finite output before the Rust library installs it.
+
+NAM `inspect_asset` returns `{kind:"asset-info",id,assetKind:"nam",sampleRate,channels:1,architecture,modelVersion}`. Its finite model sample rate may be fractional in the range 8000–96000 Hz. A missing `sample_rate` uses the explicit 48000 Hz assumption. The recording is converted to model rate with centered windowed-sinc interpolation, processed by the official network, and converted back with the exact recording channel/frame count preserved. A fresh model instance is reset and officially prewarmed for each source channel and render; stereo channels use independent network state. Model metadata does not silently normalize loudness.
+
+The amp's `gain` and `master` knobs are respectively input and output trims from -12 to +12 dB via `(value - 0.5) * 24`. Bass/mid/treble remain external EQ after network inference. Final shared attenuation-only headroom still applies. Inference is offline; no realtime latency claim is made.
+
+CTest loads the official `example_models/wavenet.nam` (131 weights) and `example_models/lstm.nam` (70 weights) from the pinned source checkout. These MIT engineering fixtures are not bundled production amp captures. Tests compare native processing against direct official factory inference, independently check the LSTM scalar equations, verify repeated state resets and sample-rate conversion, and exercise invalid weights/configurations before unsafe construction.
 
 ## Build and test
 
@@ -35,7 +49,7 @@ For reuse of an existing verified JUCE source checkout:
 
 ```sh
 TONEY_SDK_PATH="$(xcrun --show-sdk-path)"
-CPLUS_INCLUDE_PATH="$TONEY_SDK_PATH/usr/include/c++/v1" JUCE_PATH=/absolute/path/to/JUCE npm run native:build
+CPLUS_INCLUDE_PATH="$TONEY_SDK_PATH/usr/include/c++/v1" JUCE_PATH=/absolute/path/to/JUCE NAM_PATH=/absolute/path/to/NeuralAmpModelerCore npm run native:build
 ```
 
 ## Protocol version 1
@@ -47,15 +61,16 @@ The helper reads one UTF-8 JSON line (at most 1 MiB and 64 levels of nesting) fr
 ```
 
 ```json
-{"protocolVersion":1,"requestId":"inspect-001","ok":true,"result":{"kind":"engine-info","engineVersion":"0.3.0","backend":"JUCE","capabilities":["device-enumeration","rig-validation","offline-render"]}}
+{"protocolVersion":1,"requestId":"inspect-001","ok":true,"result":{"kind":"engine-info","engineVersion":"0.5.0","backend":"JUCE","capabilities":["device-enumeration","rig-validation","offline-render","cabinet-ir","neural-amp"]}}
 ```
 
 Commands:
 
-- `get_engine_info` reports implemented capabilities.
+- `get_engine_info` reports engine version 0.5.0 and implemented capabilities.
+- `inspect_asset` validates a hash-addressed internal asset descriptor and reports its measured IR format or supported NAM architecture/model rate before library installation.
 - `get_audio_devices` returns `{kind:"audio-devices", devices:[{id,name,kind,backend,isDefault}]}`. `kind` is `input` or `output`. IDs identify this enumeration result; they are not persistent hardware identifiers. Empty inventories are legitimate. No sample rates, buffer sizes, latency measurements, or routing state are invented.
 - `validate_tone_spec` requires a `tone` following `core/tone/types.ts`. It returns `{kind:"rig-valid",toneId,revision,nodeCount,activeNodeCount}`. This confirms schema/catalog validity without rendering audio.
-- `render_audio` requires a valid `tone` and exactly `render:{inputPath,outputPath}`. Both paths are absolute paths created by the Rust bridge inside an isolated temporary directory; the frontend cannot inject paths. It returns `{kind:"audio-render",toneId,revision,sampleRate,channels,inputFrames,outputFrames,peak,attenuationDb,engineVersion:"0.3.0"}`. The bridge owns cleanup and sends the resulting bytes to the frontend.
+- `render_audio` requires a valid `tone` and `render:{inputPath,outputPath,assets?}`. Both paths are absolute paths created by the Rust bridge inside an isolated temporary directory; the frontend cannot inject paths. Optional `assets` contains the library-resolved `{id,kind,path}` descriptors for enabled asset nodes. It returns `{kind:"audio-render",toneId,revision,sampleRate,channels,inputFrames,outputFrames,peak,attenuationDb,engineVersion:"0.5.0"}`. The bridge owns cleanup and sends the resulting bytes to the frontend.
 
 Failures use `{protocolVersion:1,requestId,ok:false,error:{code,message}}`. Stable codes include `INVALID_REQUEST`, `UNSUPPORTED_PROTOCOL`, `UNKNOWN_COMMAND`, `INVALID_TONE_SPEC`, `REQUEST_TOO_LARGE`, and `INTERNAL_ERROR`.
 
@@ -65,7 +80,7 @@ The native validator checks all current effect types/model IDs, complete paramet
 
 Input is RIFF/WAVE PCM (8/16/24/32-bit) or IEEE float32, mono or stereo, at an integer sample rate from 8000 through 96000 Hz. RIFF chunks and declared payload sizes are checked before decoding; truncated files, unsupported encodings, silent recordings, and non-finite samples are rejected. Input limits are 90 seconds and 32 MiB. Rendering preserves the sample rate and channel count. Output is PCM16 WAV, bounded at 32 MiB, created exclusively so an existing destination is never overwritten. Processing/writing failures remove partial output created by that request.
 
-The chain uses a linked envelope compressor, nonlinear drive and amp with tone filters, a filtered cabinet approximation, three-band EQ, modulated delay chorus, filtered feedback delay, and a four-comb/two-allpass Schroeder room. Every catalog parameter controls its processor. No random seed, clock, hardware, or inference participates in rendering.
+The chain uses a linked envelope compressor, nonlinear drive and amp with tone filters, a filtered cabinet approximation, three-band EQ, modulated delay chorus, filtered feedback delay, and a four-comb/two-allpass Schroeder room. Every catalog parameter controls its processor. Imported cabinet nodes use real convolution and imported amp nodes use official NAM inference as described above. Rendering is deterministic and independent of random seeds, clocks, audio hardware, and agent inference.
 
 `inputFrames` records the exact decoded source length. `outputFrames` includes the source plus a calculated tail (up to 12 seconds total). Fully bypassed chains retain the source frame count and signal, allowing PCM16 quantization and necessary headroom attenuation. Long feedback tails are truncated at the cap. Silent wet mixes add no time-effect tail. Channels receive the same processor settings; a linked compressor envelope and shared final headroom gain preserve stereo balance.
 

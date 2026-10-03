@@ -1,7 +1,10 @@
 #include "Assets.h"
 #include "Protocol.h"
+#include "NamModel.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <set>
+#include <array>
+#include <cmath>
 
 namespace toney
 {
@@ -32,7 +35,23 @@ LoadedAsset loadAsset(const juce::var& descriptor)
                                   {"sampleRate", asset.impulse->sampleRate}, {"channels", asset.impulse->samples.getNumChannels()},
                                   {"frames", asset.impulse->samples.getNumSamples()}});
     }
-    else throw ControlError("ASSET_UNSUPPORTED", "Neural models are not available in this IR milestone.");
+    else
+    {
+        asset.neural = readNamModel(file);
+        try
+        {
+            auto processor = createNamProcessor(*asset.neural);
+            std::array<float, 64> silence {}, output {};
+            processor->process(silence.data(), output.data(), 64);
+            for (const auto sample : output)
+                if (!std::isfinite(sample)) throw ControlError("ASSET_INVALID", "NAM model produces non-finite audio after prewarm.");
+        }
+        catch (const ControlError&) { throw; }
+        catch (const std::exception&) { throw ControlError("ASSET_INVALID", "NAM model cannot initialize safely with its configuration and weights."); }
+        asset.info = makeObject({{"kind", "asset-info"}, {"id", id}, {"assetKind", kind},
+                                 {"sampleRate", asset.neural->sampleRate}, {"channels", 1},
+                                 {"architecture", juce::String(asset.neural->architecture)}, {"modelVersion", juce::String(asset.neural->modelVersion)}});
+    }
     return asset;
 }
 
