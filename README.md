@@ -14,7 +14,7 @@ User intent → ToneIntent → deterministic tone compiler → ToneSpec → audi
 
 `ToneSpec` is the authoritative rig shared by the agent, controls, history, persistence, and audio processing. Manual edits become the input to subsequent agent requests.
 
-## Working checkpoint: NAM and cabinet IR audition
+## Working checkpoint: TONE3000 model selection
 
 This repository begins with a small, runnable vertical slice, following the requested agent-first development order:
 
@@ -88,8 +88,8 @@ The command prints paths to dry, bypass, crunch, and spacious WAVs plus their ri
 
 ### Try NAM and cabinet IRs
 
-1. Open the desktop app. Under **Amp models & cabinet IRs**, import your `.nam` capture and/or cabinet `.wav` impulse response.
-2. Select the imported files using **Amp model** and **Cabinet model**. Imports add files to the library; selection applies them to the rig.
+1. Open the desktop app. Under **Amp models & cabinet IRs**, choose **Browse amp models** or **Browse cabinet IRs**. TONE3000 opens in your system browser for sign-in, browsing, and audition. Selecting a tone returns to Toney.
+2. Choose a model variant and **Download to local library**. Then select it using **Amp model** or **Cabinet model**. You can also import your own `.nam` capture or cabinet `.wav` file. Downloads and imports add files to the library; selection applies them to the rig.
 3. Choose **Native DSP + NAM / IR**, then **Hear this rig**. Compare with **Dry source**, bypass a node, or select its builtin model to compare processing on the same DI.
 4. NAM gain/master are input/output trims from −12 to +12 dB, centered at 0.5. Bass/mid/treble are external EQ around the fixed capture. They do not recreate the captured amp's physical controls.
 5. Snapshot/save a preset, restart, and reuse the imported files from the durable local library. On another device, reimport the same files; a missing file is shown explicitly and blocks rendering of its enabled node. Bypassed missing nodes do not block audition.
@@ -99,7 +99,9 @@ Supported NAM files are classic mono WaveNet and LSTM captures with file version
 
 Cabinet IRs must be nonempty mono/stereo WAVs at 8–96 kHz, up to two seconds/8 MiB, with finite, nonzero samples. They are convolved without trimming or normalization; source channel count is preserved. Stereo IR channels are averaged for mono sources. IR brightness/resonance controls apply additional filters.
 
-The browser harness supports builtin effects and preset editing. It rejects enabled imported NAM/IR processing with a desktop requirement. A preset stores SHA-256 content references, never filesystem paths or embedded weights. Imported files remain local; no models are automatically downloaded or bundled.
+TONE3000 sign-in uses OAuth PKCE and the publishable application identifier supplied for this prototype. Account tokens stay in native memory; reconnect after an app restart. Downloaded assets, creator credits, and licenses persist locally and work offline. If redirect URIs are restricted in your TONE3000 settings, register `toney://tone3000/callback`. This callback requires the bundled macOS app to be registered with the OS; use the desktop bundle for this flow. No secret key is needed. See [the integration decision](docs/adr-005-tone3000-selection.md) for the boundaries and terms.
+
+The browser harness supports builtin effects and preset editing. TONE3000 downloads and enabled imported NAM/IR processing require the desktop app. A preset stores SHA-256 content references, never filesystem paths or embedded weights. Models are downloaded only on explicit request and are not bundled with Toney.
 
 ## Checkpoints
 
@@ -109,13 +111,14 @@ The browser harness supports builtin effects and preset editing. It rejects enab
 4. **Native offline audio:** native builtin DSP, bounded WAV input/output, browser/native comparison controls, deterministic audio tests, and artifact traces.
 5. **Cabinet IR integration:** durable asset library, content references, validated convolution and missing-file diagnostics.
 6. **Neural amp integration:** official NAM inference, bounded capture validation, independent states and sample-rate conversion.
-7. **Realtime playing:** audio interface input, smoothing, meters, and device lifecycle testing.
+7. **TONE3000 selection:** account authorization, compatible hosted tone browsing, explicit variant downloads, and durable creator/license metadata.
+8. **Realtime playing:** audio interface input, smoothing, meters, and device lifecycle testing.
 
 Later work adds audio analysis, candidate search, reference matching, preferences, plugin hosting, and optional research. Each checkpoint must remain runnable and be committed before review. See [architecture](docs/architecture.md), [development workflow](docs/development.md), and [checkpoint log](docs/checkpoints.md).
 
 ## Privacy
 
-Core generation and audio preview run locally. Optional model inference must use an explicitly selected local provider. Audio recordings are not uploaded. Diagnostic exports include prompts and rigs, so keep them private as appropriate. Network research is a later, opt-in capability.
+Core generation and audio preview run locally. Optional model inference must use an explicitly selected local provider. Audio recordings are not uploaded. TONE3000 browsing, sign-in, and requested downloads use its online service; installed assets work offline. Diagnostic exports include prompts, rigs, and asset attribution, so keep them private as appropriate. Credentials are excluded.
 
 The original [product proposal](docs/product-proposal.md) is preserved for reference. The current checkpoint follows the requested agent-first order; live input, audio analysis and distribution remain outstanding.
 

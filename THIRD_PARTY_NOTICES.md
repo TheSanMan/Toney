@@ -37,3 +37,9 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## TONE3000 branding and downloaded captures
+
+`public/tone3000-logo.svg` is the unmodified official full logo from [TONE3000's integration logo archive](https://www.tone3000.com/TONE3000%20Logos.zip), referenced by its [API design requirements](https://www.tone3000.com/api). TONE3000 retains its trademark and artwork rights. The integration does not imply endorsement or an approved commercial partnership.
+
+User-requested models are not distributed in this repository or in Toney's app bundle. Their creator, license, tone/model identifiers, and source page are retained in the local library. Each model's terms apply independently of the application code. Use of the online service is subject to [TONE3000 API terms](https://www.tone3000.com/api/terms).

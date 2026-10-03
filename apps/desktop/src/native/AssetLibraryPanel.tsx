@@ -4,6 +4,7 @@ import type { NativeAssetDescriptor, NativeAssetInfo } from '../../../../core/na
 import { NativeError } from '../../../../core/native/protocol';
 import { importNativeAsset, isDesktop, listNativeAssets } from './bridge';
 import type { NativeDiagnostic } from './AudioDevicesPanel';
+import { Tone3000Panel } from './Tone3000Panel';
 
 function describe(info: NativeAssetInfo): string {
   const rate = `${(info.sampleRate / 1000).toFixed(1)} kHz`;
@@ -51,7 +52,7 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
     const start = performance.now();
     try {
       const imported = await importNativeAsset(kind, file);
-      setAssets((current) => [...current.filter((item) => item.asset.id !== imported.asset.id), { asset: imported.asset, info: imported.info }]);
+      setAssets((current) => [...current.filter((item) => item.asset.id !== imported.asset.id), { asset: imported.asset, info: imported.info, ...(imported.source ? { source: imported.source } : {}) }]);
       setStatus(`${imported.asset.name} imported. Select it for an amp or cabinet below.`);
       onDiagnostic({ operation: 'asset-import', requestId: imported.requestId,
         durationMs: Math.round(performance.now() - start), result: { asset: imported.asset, info: imported.info } });
@@ -70,9 +71,12 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
 
   return <section className="native-panel asset-panel">
     <div className="native-heading"><div><span className="eyebrow">AMP MODELS & CABINET IRS</span>
-      <p>{desktop ? 'Import your captures once, then use them in any rig.' : 'Open Toney desktop to import and hear NAM captures and cabinet IRs.'}</p></div>
+      <p>{desktop ? 'Download community models or import captures, then use them in any rig.' : 'Open Toney desktop to download and hear NAM captures and cabinet IRs.'}</p></div>
       <span className="native-status">{working ? 'CHECKING ASSET…' : `${assets.length} LOCAL ASSETS`}</span>
     </div>
+    <Tone3000Panel locked={locked || working}
+      onDownloaded={(descriptor) => setAssets((current) => [...current.filter((item) => item.asset.id !== descriptor.asset.id), descriptor])}
+      onDiagnostic={onDiagnostic} />
     {desktop && <div className="native-actions">
       <button disabled={locked || working} onClick={() => namInput.current?.click()}>Import NAM model</button>
       <button disabled={locked || working} onClick={() => irInput.current?.click()}>Import cabinet IR</button>
@@ -92,6 +96,7 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
           </select>
         </label>
         <small>{selected ? describe(selected.info) : node.asset ? 'Reimport the same file to restore this reference, or select the builtin model.' : `${getNodeDefinition(node).name} · no imported file required`}</small>
+        {selected?.source && <small>TONE3000 · {selected.source.toneName} · {selected.source.creator} · {selected.source.license}</small>}
         {node.model === 'nam' && <small>Gain controls input trim; master controls output trim (−12 to +12 dB). Bass, mid and treble shape the captured sound with external EQ.</small>}
       </div>;
     })}</div>

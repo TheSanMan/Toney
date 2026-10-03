@@ -243,7 +243,7 @@ export function App() {
     <header className="app-header">
       <a className="wordmark" href="#">toney<span>●</span></a>
       <span className="tagline">YOUR TONE, DIALED IN.</span>
-      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>06</b></div>
+      <div className="local-badge"><span /> {desktop ? 'LOCAL DESKTOP' : 'LOCAL WORKBENCH'} <b>07</b></div>
     </header>
     <main className="workspace">
       <aside className="engineer-panel">
