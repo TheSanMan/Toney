@@ -22,11 +22,12 @@ unverified at checkpoint 007 and remain acceptance gates.
 
 Several source files and the Git index in the WorkFiles checkout have macOS
 `dataless` flags. Their reads stalled even outside the sandbox. Requesting
-`brctl download` did not make them readable during this investigation. Source
-inspection therefore used a temporary fresh clone at the exact published
-revision above; it does not establish the state of any unreadable local edits.
-Restore local availability with Finder's **Download Now / Keep Downloaded** option
-for Toney before rebuilding in that checkout.
+`brctl download` did not make them readable immediately. Initial source inspection
+therefore used a temporary fresh clone at the exact published revision above.
+Source and index reads later recovered; `git status` confirmed no pre-existing
+changes and local HEAD matched the reviewed revision. The documentation commit
+was then brought into the WorkFiles checkout. Some other cloud files still delayed
+Git operations. Confirm local file availability before the next rebuild.
 
 ### Download failure map
 
