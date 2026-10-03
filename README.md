@@ -14,7 +14,7 @@ User intent → ToneIntent → deterministic tone compiler → ToneSpec → audi
 
 `ToneSpec` is the authoritative rig shared by the agent, controls, history, persistence, and audio processing. Manual edits become the input to subsequent agent requests.
 
-## Working checkpoint: desktop control foundation
+## Working checkpoint: native offline audition
 
 This repository begins with a small, runnable vertical slice, following the requested agent-first development order:
 
@@ -24,7 +24,7 @@ This repository begins with a small, runnable vertical slice, following the requ
 - An offline browser audio preview makes the result audible using a synthetic plucked-string phrase or an imported clean DI file.
 - Local version history, preset export/import, and request traces support iteration and diagnosis.
 
-A Tauri macOS desktop app now packages the same workbench with a JUCE helper for real audio device discovery and independent rig validation. Preset, WAV, and diagnostic exports use native save dialogs. Its audio audition still uses Web Audio; native DSP, NAM, cabinet IRs, and realtime guitar input are subsequent checkpoints.
+The Tauri macOS desktop app packages the workbench with a JUCE helper for real device discovery, independent rig validation, and offline audio rendering through eight builtin effects. Preset, WAV, and diagnostic exports use native save dialogs. Choose native DSP or browser preview to audition the same source. Both are approximate builtin models; NAM, measured cabinet IRs, and realtime input are later work.
 
 ## Development
 
@@ -41,7 +41,7 @@ Open [the local workbench](http://127.0.0.1:5173). The server binds only to this
 ### Try the tone agent
 
 1. Pick **Dark grunge** and click **Dial in my tone**.
-2. Click **Hear this rig**. If your browser blocks automatic playback, press the audio player's play button. Compare with **Dry source**.
+2. In the desktop app, select **Native builtin DSP** under **Render with**, then click **Hear this rig**. Switch to **Browser preview** to compare. In the browser harness only browser preview is available. If automatic playback is blocked, press the player's play button. Compare with **Dry source**.
 3. Adjust a knob or bypass a pedal, then ask “make it wider.” The agent refines the current manual settings.
 4. Use **New rig** to start fresh; try **Clean funk** or **Dreamy ambient** and listen to the difference.
 5. Import a mono/stereo clean guitar DI clip (up to 90 seconds/50 MB) for a more useful audition. WAV is the safest choice; other decoding formats depend on your browser.
@@ -74,14 +74,26 @@ For a CMake executable outside PATH, set `CMAKE=/absolute/path/to/cmake`. See [n
 
 In **Audio devices**, refresh devices and validate the current rig. Device scanning does not open microphone or output streams. Validation confirms schema/catalog acceptance; it does not install a running DSP graph. Adjusting the rig marks the previous validation as outdated. Diagnostics include operation IDs, timings, and error codes.
 
-Checkpoint 003 has passed build and automated checks, including real device enumeration. Desktop GUI, native save-dialog delivery, WKWebView playback, and packaged Ollama interaction require user review because Computer Use permissions were unavailable during verification.
+Native rendering supports nonempty mono/stereo WAV staging at 8000–96000 Hz, up to 90 seconds and 32 MiB, with output at most 32 MiB and effect tails capped at 12 seconds. The workbench decodes an imported DI using Web Audio, then stages PCM16 for the native helper. Rendering preserves source sample rate/channel count, adds effect tails, and attenuates excessive peaks without boosting quiet rigs. Native exports retain the original engine WAV bytes. Errors include request IDs and preserve the current rig and previous audition.
+
+To hear native processing without GUI automation:
+
+```sh
+npm run native:audition
+# Optional: audition a preset exported from the workbench against the same phrase:
+npm run native:audition -- /absolute/path/to/preset.json
+```
+
+The command prints paths to dry, bypass, crunch, and spacious WAVs plus their rigs in the ignored native build directory. Each run uses a separate folder. The generated phrase is synthetic; bring your own guitar DI for quality decisions.
+
+Checkpoint 004 has automated renderer and transport checks. The browser audition controls and playback have been inspected interactively. Desktop native save-dialog delivery, WKWebView native audition, and packaged Ollama interaction still require user review because native Computer Use permissions were unavailable.
 
 ## Checkpoints
 
 1. **Repository foundation:** README, architecture, development workflow, and checkpoint criteria.
 2. **Tone agent workbench:** intent → rig → audible preview, manual edits, contextual refinement, validation, tests, and traces.
 3. **Desktop control foundation:** Tauri bundle, audio device enumeration, native rig validation, native saves, and local inference transport.
-4. **Native offline audio:** render a DI through native DSP, validate WAV output, and compare against the preview contract.
+4. **Native offline audio:** native builtin DSP, bounded WAV input/output, browser/native comparison controls, deterministic audio tests, and artifact traces.
 5. **Local inference and audio quality:** evaluate models, NAM and cabinet IR support, reliable generation and refinement.
 6. **Realtime playing:** audio interface input, smoothing, meters, and device lifecycle testing.
 

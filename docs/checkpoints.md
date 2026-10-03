@@ -61,3 +61,30 @@ Verification on 2026-10-02 (America/Chicago):
 Checkpoint pause: automated native boundary verified; desktop acceptance remains available for user interaction. Open `apps/desktop/src-tauri/target/debug/bundle/macos/Toney.app`, generate a tone, refresh devices, validate it, move a knob and revalidate, save/re-import a preset, audition/export WAV, and try Ollama with the Vite server stopped.
 
 Next: native offline DSP rendering from a clean DI WAV, with deterministic output checks, bypass behavior, finite samples/headroom, and artifact error tracing. Native rendering precedes opening realtime streams. Current audition remains Web Audio; device discovery and schema acceptance do not establish native DSP or latency.
+
+## 004 — Native offline audio audition
+
+Implemented:
+
+- JUCE native processing for compressor, drive, amp, cabinet filter, EQ, chorus, delay, and algorithmic reverb in canonical chain order. All 23 catalog knobs control the signal; bypassed nodes do not process it.
+- Independent ToneSpec/source validation, bounded WAV decoding/writing, source/channel/sample-rate preservation, capped effect tails, and attenuation-only shared peak control.
+- Dedicated Rust render command stages input/output in a private temporary directory; frontend cannot supply paths. A 60-second subprocess deadline and bounded output protect the control path. Success/error/timeout cleanup owns the request files.
+- Browser/native backend selector, exact native WAV playback/export, correlated rig/source/render metadata in Diagnostics, and preserved rig/audition on failure.
+- A `native:audition` command creates repeatable dry/bypass/crunch/spacious WAVs and matching presets; an optional exported preset argument adds a render of that rig.
+
+Verification on 2026-10-02 (America/Chicago):
+
+- Native build/staging passed with the pinned JUCE 8.0.14 and documented SDK workaround. CTest suites pass 84 control assertions and 49 rendering assertions.
+- Native tests cover every effect and catalog knob, full-chain byte determinism, mono/stereo bypass fidelity, finite/headroom/tail behavior, malformed/truncated/unsupported/silent/non-finite inputs, duration/size limits, and existing-output preservation.
+- Rust formatting, 12 tests, and Clippy with warnings denied pass, including private staging/cleanup, injected paths, bounded bytes, regular output files, and WAV envelope checks.
+- `npm run check`: ESLint, TypeScript, all 40 tests across seven files (no native skips), and production build pass. Actual-helper tests verify padded RIFF chunks, PCM16 artifacts, recipe contrasts, and production frontend artifact inspection against native metadata.
+- Browser harness at the existing narrow panel: backend selector and desktop requirement inspected; rendered current rig, exposed WAV export, and verified player duration 8.300 seconds, advancing playback, no audio error. Screenshot recorded at `/private/tmp/toney-checkpoint-004-browser.jpg`.
+- `npm run native:audition` produced a six-second source/bypass; crunch output 271216 frames, peak 0.850 and -2.93 dB attenuation; spacious output 491716 frames, peak 0.211 and no attenuation. Files are generated in the ignored native build auditions folder.
+- Local desktop app rebuilt with engine 0.3.0; bundled helper identity and a real bundled-helper WAV render verified independently. Desktop native GUI remains unverified because native Computer Use permissions were unavailable. Browser controls and real executable tests do not establish WKWebView/native-dialog behavior.
+- Checkpoint003 was pushed to `origin/main`; its hosted GitHub Actions run passed: https://github.com/TheSanMan/Toney/actions/runs/37085068762. Checkpoint004 is committed and pushed after its local gates; record hosted status separately when available.
+
+Limits: approximate builtin effects, no native saturation oversampling, algorithmic room instead of a measured IR, no mono-to-stereo expansion, PCM16 workbench staging, no measured real guitar quality, no NAM/IR loading or realtime stream. Browser/native DSP algorithms differ; tests prove contracts/behavior, not sample parity.
+
+Checkpoint pause: open the rebuilt desktop app, select Native builtin DSP, import a clean DI or use the demo, render/play/export, then compare Browser preview on the same source. The CLI audition gives audible native artifacts without GUI automation. Review one short slice before choosing the next tone-quality component.
+
+Next: measured cabinet IR loading and convolution with validated assets, audible A/B, missing-asset diagnostics, and preset asset references; NAM and realtime input follow their own acceptance checkpoints.
