@@ -5,6 +5,9 @@ type Values = Partial<Record<IntentPath, number | ToneIntent['distortion']['text
 interface Rule { pattern: RegExp; values: Values; issue?: 'muddy' | 'harsh' }
 
 const PROFILES: Rule[] = [
+  { pattern: /\b(?:what once was|her's|hers)\b/g, values: { 'distortion.amount': 0.04, 'distortion.texture': 'clean', 'character.aggression': 0.1, 'character.brightness': 0.62, 'character.warmth': 0.5, 'character.clarity': 0.85, 'character.width': 0.6, 'dynamics.compression': 0.25, 'dynamics.transientPreservation': 0.8, 'space.reverb': 0.15, 'space.delay': 0.05 } },
+  { pattern: /\b(?:jangle|jangly|indie pop|dream pop|surf)\b/g, values: { 'distortion.amount': 0.08, 'distortion.texture': 'clean', 'character.brightness': 0.65, 'character.width': 0.5, 'space.reverb': 0.2 } },
+  { pattern: /\b(?:jazz|jazzy)\b/g, values: { 'distortion.amount': 0.03, 'distortion.texture': 'clean', 'character.brightness': 0.3, 'character.warmth': 0.75, 'character.width': 0, 'space.reverb': 0.08 } },
   { pattern: /\b(?:grunge|nirvana|90s|nineties)\b/g, values: { 'distortion.amount': 0.7, 'distortion.texture': 'gritty', 'character.brightness': 0.32, 'character.aggression': 0.65, 'character.clarity': 0.65, 'space.reverb': 0.1, 'space.delay': 0 } },
   { pattern: /\b(?:blues|bluesy|little wing|hendrix)\b/g, values: { 'distortion.amount': 0.36, 'distortion.texture': 'crunch', 'character.warmth': 0.72, 'character.sustain': 0.55, 'dynamics.transientPreservation': 0.8, 'space.reverb': 0.14 } },
   { pattern: /\b(?:funk|funky)\b/g, values: { 'distortion.amount': 0.05, 'distortion.texture': 'clean', 'character.brightness': 0.75, 'character.clarity': 0.88, 'dynamics.compression': 0.35, 'dynamics.transientPreservation': 0.85, 'space.reverb': 0.05 } },
@@ -13,6 +16,8 @@ const PROFILES: Rule[] = [
 ];
 
 const RULES: Rule[] = [
+  { pattern: /\b(?:fuzz|fuzzy)\b/g, values: { 'distortion.amount': 0.8, 'distortion.texture': 'gritty', 'character.sustain': 0.7 } },
+
   { pattern: /\b(?:dark(?:er)?|warm(?:er)?|mellow)\b/g, values: { 'character.brightness': 0.25, 'character.warmth': 0.75 } },
   { pattern: /\b(?:bright(?:er)?|bite|sparkle|sparkly|crisp|treble)\b/g, values: { 'character.brightness': 0.8 } },
   { pattern: /\b(?:clean|cleaner)\b/g, values: { 'distortion.amount': 0.06, 'distortion.texture': 'clean', 'character.clarity': 0.85 } },
@@ -22,6 +27,7 @@ const RULES: Rule[] = [
   { pattern: /\b(?:singing|sing|sustain|lead|smooth)\b/g, values: { 'character.sustain': 0.78, 'distortion.amount': 0.65, 'distortion.texture': 'smooth' } },
   { pattern: /\b(?:soft(?:er)?|gentle|gentler)\b/g, values: { 'character.aggression': 0.15, 'distortion.amount': 0.2 } },
   { pattern: /\b(?:aggressive|aggression|attacky)\b/g, values: { 'character.aggression': 0.8, 'distortion.amount': 0.75 } },
+  { pattern: /\b(?:chorus|shimmer|warbly|warble)\b/g, values: { 'character.width': 0.6 } },
   { pattern: /\b(?:wide(?:r)?|width|stereo|huge)\b/g, values: { 'character.width': 0.75 } },
   { pattern: /\b(?:dry|drier|tight)\b/g, values: { 'space.reverb': 0.02, 'space.delay': 0 } },
   { pattern: /\b(?:spacious|space|roomy|wet|reverb|ambience)\b/g, values: { 'space.reverb': 0.38 } },
@@ -54,7 +60,16 @@ export class DeterministicProvider implements IntentProvider {
   readonly name = 'Offline tone interpreter';
 
   async interpret(request: ProviderRequest): Promise<Interpretation> {
-    const prompt = request.prompt.toLowerCase().replace(/[’']/g, "'");
+    const text = request.prompt.toLowerCase().replace(/[’']/g, "'");
+    let recognizedMix = false;
+    // Blend-only clauses name equipment as a target, not as a new gain/style cue.
+    // 'Add fuzz and blend ...' retains its first clause and creates drive normally.
+    const prompt = text.split(/[,;]|\band\b/).filter((clause) => {
+      const blendOnly = /\b\d{1,3}(?:\.\d+)?\s*%/.test(clause) && /\b(?:mix|wet|dry|blend|parallel)\b/.test(clause)
+        && !/\badd\b|\b(?:sound like|tone (?:from|of)|fuzzy version|distorted version)\b/.test(clause);
+      if (blendOnly) recognizedMix = true;
+      return !blendOnly;
+    }).join(', ');
     const intent = structuredClone(request.baseline);
     const changed = new Set<IntentPath>();
     const issues = new Set<'muddy' | 'harsh'>();
@@ -100,12 +115,16 @@ export class DeterministicProvider implements IntentProvider {
     };
     for (const profile of PROFILES) apply(profile, true);
     for (const rule of RULES) apply(rule, false);
+    if (/\b(?:what once was|her's|hers)\b/.test(prompt)) {
+      intent.references = [...new Set([...intent.references, "What Once Was — Her's"])].slice(0, 10);
+      warnings.push('This reference uses an approximate clean, modulated indie-pop starting point; the recording and original rig have not been verified.');
+    }
     if (/\b(?:nirvana|hendrix|little wing)\b/.test(prompt)) {
       intent.references = [...new Set([...intent.references, ...['Nirvana', 'Hendrix', 'Little Wing'].filter((reference) => prompt.includes(reference.toLowerCase()))])].slice(0, 10);
       warnings.push('Artist and song references use broad stylistic cues; recorded equipment and the reference audio have not been verified.');
     }
-    if (matched === 0) warnings.push('I could not identify a supported tone direction. Try clean, crunchy, darker, brighter, more delay, less gain, wider, or too muddy.');
-    if (/\b(?:like|style|sound of|tone of)\b/.test(prompt) && !/\b(?:nirvana|hendrix|little wing|grunge|blues|funk|ambient|metal|shoegaze)\b/.test(prompt)) warnings.push('This named reference is not in the offline style knowledge. Describe its gain, brightness, dynamics, and space for a more reliable result.');
+    if (matched === 0 && !recognizedMix) warnings.push('I could not identify a supported tone direction. Try clean, crunchy, darker, brighter, more delay, less gain, wider, or too muddy.');
+    if (/\b(?:like|style|sound of|tone of)\b/.test(prompt) && !/\b(?:nirvana|hendrix|little wing|grunge|blues|funk|ambient|metal|shoegaze|what once was|her's|hers|jangle|jazz|indie pop|dream pop|surf)\b/.test(prompt)) warnings.push('This named reference is not in the offline style knowledge. Describe its gain, brightness, dynamics, and space for a more reliable result.');
     return { intent, changedPaths: [...changed], warnings, issues: [...issues] };
   }
 }

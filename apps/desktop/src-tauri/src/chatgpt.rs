@@ -1139,12 +1139,18 @@ fn numeric_group(names: &[&str]) -> Value {
     json!({"type":"object","additionalProperties":false,"required":names,"properties":properties})
 }
 fn intent_schema() -> Value {
-    json!({"type":"object","additionalProperties":false,"required":["intent","changedPaths","warnings","issues","explanation"],"properties":{
+    let mut schema = json!({"type":"object","additionalProperties":false,"required":["intent","changedPaths","warnings","issues","explanation","mixSettings"],"properties":{
         "intent":{"type":"object","additionalProperties":false,"required":["character","distortion","dynamics","space","references"],"properties":{
             "character":numeric_group(&["brightness","warmth","aggression","clarity","sustain","width"]),
             "distortion":{"type":"object","additionalProperties":false,"required":["amount","texture"],"properties":{"amount":{"type":"number","minimum":0,"maximum":1},"texture":{"type":"string","enum":["clean","crunch","gritty","smooth"]}}},
             "dynamics":numeric_group(&["compression","transientPreservation"]),"space":numeric_group(&["reverb","delay"]),"references":{"type":"array","maxItems":10,"items":{"type":"string"}}}},
-        "changedPaths":{"type":"array","items":{"type":"string","enum":INTENT_PATHS}},"warnings":{"type":"array","items":{"type":"string"}},"issues":{"type":"array","items":{"type":"string","enum":["muddy","harsh"]}},"explanation":{"type":"string"}}})
+        "changedPaths":{"type":"array","items":{"type":"string","enum":INTENT_PATHS}},"warnings":{"type":"array","items":{"type":"string"}},"issues":{"type":"array","items":{"type":"string","enum":["muddy","harsh"]}},"explanation":{"type":"string"},"mixSettings":{"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["nodeId","mix"],"properties":{"nodeId":{"type":"string"},"mix":{"type":"number","minimum":0,"maximum":1}}}}}});
+    schema["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("gearRecommendations"));
+    schema["properties"]["gearRecommendations"] = json!({"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["role","label","rationale","searchQuery","builtinType"],"properties":{"role":{"type":"string","enum":["pedal","amp","cab"]},"label":{"type":"string"},"rationale":{"type":"string"},"searchQuery":{"type":"string"},"builtinType":{"type":["string","null"],"enum":["chorus","delay","reverb",null]}}}});
+    schema
 }
 fn exact_keys(v: &Value, keys: &[&str]) -> bool {
     v.as_object()
@@ -1201,8 +1207,13 @@ fn validate_interpretation(v: &Value, id: &str) -> Result<(), NativeError> {
             id,
         )
     };
+    let mut allowed = v.clone();
+    if let Some(object) = allowed.as_object_mut() {
+        object.remove("mixSettings");
+        object.remove("gearRecommendations");
+    }
     if !exact_keys(
-        v,
+        &allowed,
         &[
             "intent",
             "changedPaths",
@@ -1231,6 +1242,52 @@ fn validate_interpretation(v: &Value, id: &str) -> Result<(), NativeError> {
             if (field == "changedPaths" && !INTENT_PATHS.contains(&s))
                 || (field == "issues" && !["muddy", "harsh"].contains(&s))
                 || (field != "warnings" && !seen.insert(s))
+            {
+                return Err(invalid());
+            }
+        }
+    }
+    if let Some(settings) = v.get("mixSettings") {
+        let rows = settings
+            .as_array()
+            .filter(|a| a.len() <= 24)
+            .ok_or_else(invalid)?;
+        let mut seen = HashSet::new();
+        for row in rows {
+            let node_id = row["nodeId"]
+                .as_str()
+                .filter(|s| text(s, 100))
+                .ok_or_else(invalid)?;
+            if !exact_keys(row, &["nodeId", "mix"])
+                || !seen.insert(node_id)
+                || row["mix"]
+                    .as_f64()
+                    .is_none_or(|x| !(0.0..=1.0).contains(&x))
+            {
+                return Err(invalid());
+            }
+        }
+    }
+    if let Some(settings) = v.get("gearRecommendations") {
+        let rows = settings
+            .as_array()
+            .filter(|a| a.len() <= 8)
+            .ok_or_else(invalid)?;
+        for row in rows {
+            if !exact_keys(
+                row,
+                &["role", "label", "rationale", "searchQuery", "builtinType"],
+            ) || row["role"]
+                .as_str()
+                .is_none_or(|s| !["pedal", "amp", "cab"].contains(&s))
+                || ["label", "rationale", "searchQuery"]
+                    .iter()
+                    .any(|key| row[key].as_str().is_none_or(|s| !text(s, 600)))
+                || (!row["builtinType"].is_null()
+                    && (row["role"] != "pedal"
+                        || row["builtinType"]
+                            .as_str()
+                            .is_none_or(|s| !["chorus", "delay", "reverb"].contains(&s))))
             {
                 return Err(invalid());
             }
@@ -1265,7 +1322,7 @@ fn interpret_request(value: Value) -> Result<InterpretRequest, NativeError> {
 }
 fn response_body(r: &InterpretRequest) -> Value {
     json!({"model":r.model,"store":false,"stream":true,
-        "instructions":"You are Toney's guitar tone engineer. Translate the user's musical intent into the perceptual tone schema. Values are 0 to 1. Baseline comes from current manual controls and is authoritative. For refinement, change only requested intent fields, list exactly those fields in changedPaths, and preserve the others. Explain your tonal choices and tradeoffs concisely in at most 2000 characters. Advisory questions may return unchanged intent with empty changedPaths and a helpful explanation. Artist references are style cues, not verified rig claims. Never claim to have listened to or measured audio: this request contains text and rig descriptors only. Never invent installed equipment, available captures or physical amp knob settings. Captured NAM model controls are input/output trim; the physical captured settings are fixed. Amp EQ is post-capture EQ. The compiler handles supported DSP. Use issues muddy or harsh only when requested. Warn about ambiguity or unavailable capabilities. Return only the structured result.",
+        "instructions":"You are Toney's guitar tone engineer. Translate the user's musical intent into the perceptual tone schema. Values are 0 to 1. Baseline comes from current manual controls and is authoritative. For refinement, change only requested intent fields, list exactly those fields in changedPaths, and preserve the others. Explain your tonal choices and tradeoffs concisely in at most 2000 characters. Advisory questions may return unchanged intent with empty changedPaths and a helpful explanation. Artist references are style cues, not verified rig claims. Never claim to have listened to or measured audio: this request contains text and rig descriptors only. Never invent installed equipment, available captures or physical amp knob settings. Captured NAM model controls are input/output trim; the physical captured settings are fixed. Amp EQ is post-capture EQ. The compiler handles supported DSP. Use issues muddy or harsh only when requested. Warn about ambiguity or unavailable capabilities. Distinguish genre and arrangement: indie/dream pop and jangly clean guitar are not fuzzy distortion. For What Once Was by Her's use an approximate clean, chiming, chorus-modulated starting point with restrained reverb; do not claim to know the exact rig or have listened to its recording. Never interpret a negated distortion or fuzz cue as a request for gain. If the user asks to match a new song/style, replace incompatible character fields rather than nudging an unrelated previous distorted tone. Standard NAM captures represent static nonlinear processing; use built-in time-varying chorus/delay/reverb, never promise a moving chorus from a static NAM capture. Return up to 8 gearRecommendations using concrete equipment families (for example Roland JC-120 clean, Fender Twin clean, Vox AC30 low gain, Marshall JTM45, Big Muff, Jensen 2x12 or V30 4x12) with rationale and catalog searchQuery. These are starting-point alternatives, never claims about the original recorded rig. builtinType is chorus/delay/reverb for built-in time-varying effects, otherwise null. Never invent installed capture IDs or unavailable products. Choose families from musical intent, not one fixed genre template. mixSettings is an array of nodeId/mix for the supplied currentTone nodes; mix is normalized 0 dry/bypass to 1 processed stage. Use it to execute requested effect balance, including parallel fuzz or chorus percentage. Emit [] when no specific stage mix adjustment is intended. Never guess between duplicate unnamed stages. Existing nodes and captured pedals stay independent. Return only the structured result.",
         "input":[{"role":"user","content":serde_json::to_string(&json!({"prompt":r.prompt,"baseline":r.baseline,"mode":if r.current_tone.is_some(){"refine"}else{"generate"},"currentTone":r.current_tone})).unwrap()}],
         "text":{"format":{"type":"json_schema","name":"toney_intent","strict":true,"schema":intent_schema()}}})
 }
@@ -1710,6 +1767,19 @@ mod tests {
         let mut v=serde_json::to_value(json!({"protocolVersion":1,"requestId":"request","model":"catalog-model","prompt":"warm","baseline":baseline()})).unwrap();
         v["url"] = json!("https://other.example");
         assert!(interpret_request(v).is_err());
+    }
+    #[test]
+    fn intent_mix_settings_are_bounded_and_unique() {
+        let mut value = json!({"intent":baseline(),"changedPaths":[],"warnings":[],"issues":[],"explanation":"Blend only this stage.","mixSettings":[{"nodeId":"drive_1","mix":0.2}]});
+        assert!(validate_interpretation(&value, "request").is_ok());
+        value["mixSettings"][0]["mix"] = json!(1.2);
+        assert!(validate_interpretation(&value, "request").is_err());
+        value["mixSettings"] =
+            json!([{"nodeId":"drive_1","mix":0.2},{"nodeId":"drive_1","mix":0.4}]);
+        assert!(validate_interpretation(&value, "request").is_err());
+        value["mixSettings"] =
+            json!([{"nodeId":"drive_1","mix":0.2,"url":"https://other.example"}]);
+        assert!(validate_interpretation(&value, "request").is_err());
     }
     #[test]
     fn sse_handles_split_utf8_and_requires_completed_inference() {

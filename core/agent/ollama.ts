@@ -1,5 +1,6 @@
 import { INTENT_PATHS, type IntentPath } from '../tone/types';
 import { object, validateToneIntent } from '../tone/validation';
+import { validateInterpretation } from './types';
 import type { IntentProvider, Interpretation, ProviderRequest } from './types';
 
 const numeric = { type: 'number', minimum: 0, maximum: 1 };
@@ -20,6 +21,8 @@ export const OLLAMA_INTENT_SCHEMA = {
     },
     changedPaths: { type: 'array', uniqueItems: true, items: { type: 'string', enum: INTENT_PATHS } },
     warnings: { type: 'array', items: { type: 'string' } },
+    gearRecommendations: { type: 'array', maxItems: 8, items: { type: 'object', additionalProperties: false, required: ['role', 'label', 'rationale', 'searchQuery', 'builtinType'], properties: { role: { type: 'string', enum: ['pedal', 'amp', 'cab'] }, label: { type: 'string' }, rationale: { type: 'string' }, searchQuery: { type: 'string' }, builtinType: { type: ['string', 'null'], enum: ['chorus', 'delay', 'reverb', null] } } } },
+    mixSettings: { type: 'array', maxItems: 24, items: { type: 'object', additionalProperties: false, required: ['nodeId', 'mix'], properties: { nodeId: { type: 'string' }, mix: numeric } } },
     issues: { type: 'array', uniqueItems: true, items: { type: 'string', enum: ['muddy', 'harsh'] } },
   },
 };
@@ -44,7 +47,7 @@ export class OllamaProvider implements IntentProvider {
       let response: Response;
       try {
         response = await this.transport(JSON.stringify({ model: this.model, stream: false, format: OLLAMA_INTENT_SCHEMA, options: { temperature: 0 }, messages: [
-            { role: 'system', content: 'You are a guitar tone engineer. Translate the request into the provided perceptual intent schema. Values are 0 to 1. This is local inference. Return only structured JSON. Baseline is derived from current manual controls and is authoritative. For refinement, change only requested intent fields, list exactly those fields in changedPaths, and preserve all others. Never claim to have measured audio or verified an artist rig. If language is ambiguous, provide warnings. References are broad style cues. Use issues muddy or harsh only when the user requests those corrections. Never emit DSP parameter calls.' },
+            { role: 'system', content: 'You are a guitar tone engineer. Translate the request into the provided perceptual intent schema. Values are 0 to 1. This is local inference. Return only structured JSON. Baseline is derived from current manual controls and is authoritative. For refinement, change only requested intent fields, list exactly those fields in changedPaths, and preserve all others. Never claim to have measured audio or verified an artist rig. If language is ambiguous, provide warnings. References are broad style cues. Use issues muddy or harsh only when the user requests those corrections. For clean jangly indie pop, use low distortion and chorus; do not default to fuzz. What Once Was by Her\'s is an approximate clean modulated starting point, never a verified recorded rig. Standard NAM is static; use built-in chorus/delay/reverb for modulation. Never turn a negated fuzz cue into added distortion. mixSettings may set normalized stage wet/dry mix for exact node IDs in currentTone, 0 dry to 1 processed. Return [] if none; never guess between duplicates. Return optional gearRecommendations with concrete amp/pedal/cab families, rationale and searchQuery; never invent installed model IDs or claim the original recorded rig. For built-in chorus/delay/reverb set builtinType, otherwise null. Never emit unvalidated DSP calls.' },
             { role: 'user', content: JSON.stringify({ prompt: request.prompt, baseline: request.baseline, mode: request.currentTone ? 'refine' : 'generate', ...(request.currentTone ? { currentTone: request.currentTone } : {}) }) },
           ] }), controller.signal);
       } catch (error: unknown) {
@@ -62,7 +65,7 @@ export class OllamaProvider implements IntentProvider {
       if (!Array.isArray(value.changedPaths) || value.changedPaths.some((path: unknown) => typeof path !== 'string' || !INTENT_PATHS.includes(path as IntentPath))) throw new Error('Local Ollama returned unsupported intent field names.');
       if (!Array.isArray(value.warnings) || value.warnings.some((warning: unknown) => typeof warning !== 'string' || warning.length > 2000)) throw new Error('Local Ollama returned malformed warnings.');
       if (!Array.isArray(value.issues) || value.issues.some((issue: unknown) => issue !== 'muddy' && issue !== 'harsh')) throw new Error('Local Ollama returned unsupported engineering issues.');
-      return { intent, changedPaths: value.changedPaths as IntentPath[], warnings: value.warnings as string[], issues: value.issues as ('muddy' | 'harsh')[] };
+      return validateInterpretation({ ...value, intent });
     } finally { clearTimeout(timeout); }
   }
 }
