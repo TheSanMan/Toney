@@ -255,3 +255,30 @@ Checkpoint pause / guitar acceptance:
 5. Stop and verify monitoring/input closes. Try a denied permission or unplug/replug, then explicit restart. If you hear clicks, choose 256/512 samples after Stop. Return interface name, input channel, buffer, audible latency/dropouts and any error/request ID; no audio upload is needed.
 
 Next: resolve hardware acceptance findings and listening feedback before adding recording, live resampling, tail-preserving parameter updates, stereo expansion or plugin hosting. Audio analysis and the gear-aware agent candidate loop remain separate work.
+
+## 010 — Integrated gear, independent stages and direct headphone workspace
+
+Implemented on 2026-10-04, engine **0.7.0**:
+
+- Fixed-height desktop workspace with an independently scrolling tone engineer, horizontal pedalboard, selected-stage controls and persistent live guitar dock. Audio rate/buffer and diagnostics are folded away. Current manual rig and bounded device settings persist independently of history; input never resumes automatically.
+- Add, remove, reorder, bypass and blend independent stages. Up to 32 stages; live resources allow five NAM nodes and one cabinet IR. Fuzz captures can run alongside a separate moving chorus. NAM captures remain static nonlinear processors; a dry CE-1 preamp capture supplies no chorus movement.
+- Whole-stage wet/dry is implemented across native live/offline and browser engines. Capture selection starts with neutral trims/EQ. Improved builtin zero-gain identity, saturation transition and live output soft knee. New rigs start with no delay/reverb blend. **Dry / direct · no room** removes those room effects from existing rigs.
+- Agent accepts validated recommendations and targeted stage mixes, preserves unrelated stages, distinguishes capture input trims from physical amp gain, and gives clean/chiming song-reference guidance without inventing audio analysis or verified artist equipment. Named gear suggestions lead to local assets or catalog browsing. Missing dynamic effects can be added independently.
+- TONE3000 Select opens in an app-owned companion webview with official preview/navigation. Callback state, bounded native downloads, single-use authorization and cancellation remain protected. Remote pages receive no Tauri command capability. Search-prefill is not documented by the official Select integration: recommended search text is shown for manual entry. A1 supported; A2/parametric models remain unsupported.
+
+Verification:
+
+- **124 frontend tests across 17 files**, strict TypeScript, ESLint and production build pass. **52 Rust tests pass**, with one opt-in live-account test ignored; fmt and all-target Clippy with warnings denied pass. The loopback HTTP fixture required sandbox escalation and contacted no user account.
+- **All five native CTest suites pass**, including **54 live checks**. Independent NAM chains, mix identity, continuity, aligned cabinet blending, fault bounds and callback allocation checks are covered. No hardware was opened.
+- Full desktop mock UI review covers clean reference interpretation, independent NAM fuzz and amp, reordering, named 30% fuzz mix, direct headphone correction, Apply/Stop, persistent monitoring across panes and reload persistence with input closed. This establishes UI behavior with a fixture transport, not physical audio quality or live model reasoning.
+- Updated native bundle launched successfully. The existing revision77 rig, six local assets and ChatGPT connection survived restart. The real TONE3000 companion window loaded its email sign-in screen; **Close and return to app** restored browsing controls. No account login or capture download was submitted during this check. Current rig revision78 was saved with delay/reverb disabled; hardware input stayed closed. Native screenshot: `/private/tmp/toney-checkpoint-010-native.jpg`.
+- Rebuilt macOS development bundle is 58.84 MiB. Its native executable matches the final build and embeds frontend assets `index-EFUXAmyJ.js` and `index-B4vOhQ2D.css`. Bundled 0.7.0 helper SHA-256: `27f5a5ee8c0dde979a8bdd6ea2b005eec8f458f18c56dac1fff7bdb56504ed7c`.
+
+Checkpoint pause / listening acceptance:
+
+1. Updated app is already open with input closed. Select the interface for both guitar input and headphone output; use wired interface headphones and turn off interface direct monitoring. Start at 48 kHz/128 samples and −12 dB output.
+2. Current rig has room effects disabled. Start live guitar, listen, then edit stages and press **Apply current rig + gains**. Physical playback, clipping, latency and interface reconnect remain user acceptance checks.
+3. For a clean Her’s-style direction, ask for clean/chiming guitar, subtle moving chorus and no fuzz. Choose a clean capture rather than expecting trim to turn a distorted Marshall capture into a different amp. Keep a separate dynamic chorus stage.
+4. Gear library → Browse amps/pedals/cabinets opens the TONE3000 window. Sign in there once, select a supported capture, return and download a variant. Authentication completion and a real download through the updated window remain user acceptance checks.
+
+Mix controls currently cover serial stage wet/dry; parallel buses, stereo modulation expansion, audio-reference analysis, DAW recording and tail-preserving live parameter automation are future work.
