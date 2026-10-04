@@ -121,6 +121,15 @@ int main()
         expect(difference(render(bypass, signal, 128), signal) < 1e-7, "bypass preserves input with compensating signed trims");
         toney::RealtimeProcessor silent(fixture(), 48000, nullptr, 0, -12);
         expect(difference(render(silent, std::vector<float>(8192), 128), std::vector<float>(8192)) == 0, "fresh builtin graph is silent for silent input");
+        auto cleanTone = dry();
+        auto& cleanAmp = cleanTone["chain"].getArray()->getReference(2);
+        cleanAmp.getDynamicObject()->setProperty("enabled", true);
+        for (const auto* key : {"bass", "mid", "treble", "master"}) cleanAmp["parameters"].getDynamicObject()->setProperty(key, 0.5);
+        cleanAmp["parameters"].getDynamicObject()->setProperty("gain", 0.0);
+        toney::RealtimeProcessor cleanAmpProcessor(cleanTone, 48000, nullptr, 0, 0);
+        auto cleanExpected = signal;
+        for (auto& sample : cleanExpected) sample *= 0.4f;
+        expect(difference(render(cleanAmpProcessor, signal, 73), cleanExpected) < 1e-6, "zero-gain builtin amp is actually clean instead of always applying tanh distortion");
         toney::RealtimeProcessor clipped(dry(), 48000, nullptr, 24, 0);
         const auto bounded = render(clipped, std::vector<float>(512, 10), 128);
         expect(std::all_of(bounded.begin(), bounded.end(), [](float x) { return std::isfinite(x) && x <= 0.85f; }), "live output remains finite and bounded");
@@ -178,6 +187,43 @@ int main()
             expect(rejected, "NAM device-rate mismatch fails before callback");
             expect(!neural.failed(), "actual NAM output is finite");
         }
+        // Independent captures and their parallel stage blends must agree with
+        // offline processing, remain stateful across blocks, and allocate nothing.
+        auto stackedTone = dry();
+        const auto stackedFile = juce::File(TONEY_NAM_FIXTURES).getChildFile("lstm.nam");
+        const auto stackedAsset = descriptor(stackedFile, "nam");
+        auto pedal = stackedTone["chain"].getArray()->getReference(1);
+        pedal.getDynamicObject()->setProperty("model", "nam");
+        pedal.getDynamicObject()->setProperty("enabled", true);
+        pedal.getDynamicObject()->setProperty("asset", toney::makeObject({{"id", stackedAsset["id"]}, {"kind", "nam"}, {"name", "lstm.nam"}}));
+        pedal.getDynamicObject()->setProperty("mix", 0.35);
+        for (const auto* key : {"gain", "tone", "level"}) pedal["parameters"].getDynamicObject()->setProperty(key, 0.5);
+        juce::Array<juce::var> stages;
+        for (int i = 0; i < 4; ++i)
+        {
+            auto independent = juce::JSON::parse(juce::JSON::toString(pedal));
+            independent.getDynamicObject()->setProperty("id", "independent-pedal-" + juce::String(i));
+            stages.add(independent);
+        }
+        auto chorusNode = fixture()["chain"].getArray()->getReference(5);
+        stages.add(chorusNode);
+        stackedTone.getDynamicObject()->setProperty("chain", stages);
+        toney::AssetLibrary stackedLibrary(stackedTone, juce::Array<juce::var>{stackedAsset});
+        toney::RealtimeProcessor stacked(stackedTone, 48000, &stackedLibrary, 0, 0), stackedParts(stackedTone, 48000, &stackedLibrary, 0, 0);
+        const auto stackOutput = render(stacked, signal, 128);
+        expect(difference(stackOutput, render(stackedParts, signal, 73)) < 1e-6, "four independent NAM blends plus chorus preserve callback state");
+        juce::AudioBuffer<float> stackReference(1, static_cast<int>(signal.size()));
+        std::copy(signal.begin(), signal.end(), stackReference.getWritePointer(0));
+        toney::processEffects(stackReference, 48000, stackedTone, &stackedLibrary);
+        expect(difference(stackOutput, std::vector<float>(stackReference.getReadPointer(0), stackReference.getReadPointer(0) + signal.size())) < 1e-6, "NAM wet/dry chains match offline processing");
+        expect(allocations == 0, "NAM stage mixes allocate no memory in callback");
+        auto zeroMixTone = fixture();
+        for (auto& node : *zeroMixTone["chain"].getArray()) node.getDynamicObject()->setProperty("mix", 0.0);
+        toney::RealtimeProcessor zeroMix(zeroMixTone, 48000, nullptr, 0, 0);
+        expect(difference(render(zeroMix, signal, 73), signal) < 1e-7, "zero stage mixes preserve exact dry guitar through entire graph");
+        toney::RealtimeProcessor knee(dry(), 48000, nullptr, 0, 0);
+        const auto kneeOutput = render(knee, std::vector<float>{0.69f, 0.70f, 0.75f, 0.80f, 0.90f, 1.0f}, 6);
+        expect(kneeOutput[0] == 0.69f && kneeOutput[1] == 0.70f && kneeOutput[4] > kneeOutput[3] && kneeOutput[5] > kneeOutput[4] && kneeOutput[5] < 0.85f, "output safety knee preserves quiet guitar and avoids flat hard clipping");
         auto irTone = dry();
         juce::AudioBuffer<float> impulse(1, 256); impulse.clear(); impulse.setSample(0, 0, 0.5f); impulse.setSample(0, 150, 0.2f);
         const auto irFile = directory.getChildFile("cab.wav"); toney::writeWaveExclusive(irFile, impulse, 48000);
@@ -200,6 +246,11 @@ int main()
         expect(difference(cabbed, scalar) < 1e-5, "streaming IR matches independent scalar convolution");
         expect(difference(cabbed, signal) > 0.01, "prepared cabinet IR actually processes samples");
         expect(ir.latencySamples() == 0 && !ir.failed(), "cabinet reports actual zero convolution latency");
+        cabinet.getDynamicObject()->setProperty("mix", 0.5);
+        toney::RealtimeProcessor blendedCabinet(irTone, 48000, &irLibrary, 0, 0);
+        auto mixedExpected = scalar;
+        for (std::size_t i = 0; i < signal.size(); ++i) mixedExpected[i] = 0.5f * (scalar[i] + signal[i]);
+        expect(difference(render(blendedCabinet, signal, 73), mixedExpected) < 1e-5, "IR stage blend aligns zero-latency processing with dry input");
         expect(allocations == 0, "NAM/IR and builtin processing have no C++ heap allocations");
 
         toney::RealtimeProcessor first(dry(), 48000, nullptr, 0, -12), replacement(dry(), 48000, nullptr, 0, -24);
@@ -233,6 +284,17 @@ int main()
         auto invalidStart = request("start_live"); invalidStart.getDynamicObject()->setProperty("tone", fixture());
         invalidStart.getDynamicObject()->setProperty("live", toney::makeObject({{"inputDeviceId", "x"}, {"outputDeviceId", "x"}, {"inputChannel", 32}, {"sampleRate", 48000}, {"bufferSize", 128}, {"inputGainDb", 0}, {"outputGainDb", -12}}));
         expect(session.handle(juce::JSON::toString(invalidStart))["error"]["code"].toString() == "INVALID_REQUEST", "invalid channel fails before device access");
+        auto boundedTone = juce::JSON::parse(juce::JSON::toString(stackedTone));
+        auto* boundedStages = boundedTone["chain"].getArray();
+        auto fifthCapture = juce::JSON::parse(juce::JSON::toString((*boundedStages)[0]));
+        fifthCapture.getDynamicObject()->setProperty("id", "fifth-capture");
+        boundedStages->add(fifthCapture);
+        invalidStart.getDynamicObject()->setProperty("tone", boundedTone);
+        expect(session.handle(juce::JSON::toString(invalidStart))["error"]["code"].toString() == "INVALID_REQUEST", "five captures pass rig resource bounds before invalid configuration");
+        auto sixthCapture = juce::JSON::parse(juce::JSON::toString(fifthCapture));
+        sixthCapture.getDynamicObject()->setProperty("id", "sixth-capture");
+        boundedStages->add(sixthCapture);
+        expect(session.handle(juce::JSON::toString(invalidStart))["error"]["code"].toString() == "LIVE_RIG_TOO_COMPLEX", "six captures fail resource bounds before hardware access");
         expect(static_cast<bool>(session.handle(juce::JSON::toString(request("stop_live")))["ok"]), "Stop is idempotent without hardware");
     }
     catch (const std::exception& error) { audit = false; ++failures; std::cerr << "Unexpected: " << error.what() << '\n'; }

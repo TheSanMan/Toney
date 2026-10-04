@@ -117,7 +117,7 @@ juce::var validateTone(const juce::var& tone)
     {
         const auto& node = (*chain)[index];
         const auto path = "tone.chain[" + juce::String(index) + "]";
-        keys(node, {"id", "type", "model", "enabled", "parameters"}, path, schema == 2 ? std::set<juce::String>{"asset"} : std::set<juce::String>{});
+        keys(node, {"id", "type", "model", "enabled", "parameters"}, path, schema == 2 ? std::set<juce::String>{"asset", "mix"} : std::set<juce::String>{});
         if (!ids.insert(text(node["id"], path + ".id")).second)
             invalid(path + ".id", "duplicate node ID");
         const auto type = text(node["type"], path + ".type");
@@ -148,6 +148,7 @@ juce::var validateTone(const juce::var& tone)
         std::set<juce::String> parameterNames;
         for (const auto& parameter : definition.parameters)
             parameterNames.insert(parameter.first);
+        if (node.getDynamicObject()->hasProperty("mix")) number(node["mix"], path + ".mix", 0, 1);
         const auto parameters = node["parameters"];
         keys(parameters, parameterNames, path + ".parameters");
         for (const auto& parameter : definition.parameters)

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(ToneyEngine VERSION 0.6.0 LANGUAGES C CXX)
+project(ToneyEngine VERSION 0.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -44,7 +44,7 @@ target_compile_definitions(toney-engine-control PUBLIC
   JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
   JUCE_USE_FLAC=0 JUCE_USE_OGGVORBIS=0 JUCE_USE_MP3AUDIOFORMAT=0
   JUCE_APPLICATION_NAME_STRING="ToneyEngine"
-  JUCE_APPLICATION_VERSION_STRING="0.6.0")
+  JUCE_APPLICATION_VERSION_STRING="0.7.0")
 
 add_executable(toney-engine src/Main.cpp)
 target_link_libraries(toney-engine PRIVATE toney-engine-control)

@@ -133,8 +133,8 @@ void validateLiveTone(const juce::var& tone)
             if (node["model"].toString() == "nam") ++neural;
             if (node["model"].toString() == "cab_ir") ++cabinets;
         }
-    if (neural > 2 || cabinets > 1)
-        throw ControlError("LIVE_RIG_TOO_COMPLEX", "Live rigs support up to two NAM nodes (pedal and amp) and one cabinet IR. Bypass extra capture nodes before starting.");
+    if (neural > 5 || cabinets > 1)
+        throw ControlError("LIVE_RIG_TOO_COMPLEX", "Live rigs support up to five NAM nodes (four pedals and an amp) and one cabinet IR. Bypass extra capture nodes before starting.");
 }
 DeviceChoice resolve(juce::OwnedArray<juce::AudioIODeviceType>& types, const juce::String& id, bool input)
 {

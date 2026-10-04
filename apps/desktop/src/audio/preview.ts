@@ -101,7 +101,8 @@ function saturationCurve(gain: number): Float32Array<ArrayBuffer> {
   const curve = new Float32Array(4096);
   for (let i = 0; i < curve.length; i++) {
     const x = i * 2 / (curve.length - 1) - 1;
-    curve[i] = Math.tanh(x * gain) / Math.tanh(gain);
+    const blend = Math.min(1, gain - 1);
+    curve[i] = x + blend * (Math.tanh(x * gain) / Math.tanh(gain) - x);
   }
   return curve;
 }
@@ -265,7 +266,20 @@ export async function renderTone(tone: ToneSpec, input?: AudioBuffer): Promise<A
   const source = context.createBufferSource();
   source.buffer = input ?? createDemoBuffer(context);
   let output: AudioNode = source;
-  for (const node of enabled) output = processNode(context, output, node);
+  for (const node of enabled) {
+    const inputStage = output;
+    const wetStage = processNode(context, inputStage, node);
+    const stageMix = node.mix ?? 1;
+    if (stageMix === 1) output = wetStage;
+    else {
+      const dry = context.createGain(), wet = context.createGain(), sum = context.createGain();
+      dry.gain.value = 1 - stageMix;
+      wet.gain.value = stageMix;
+      chain(inputStage, dry, sum);
+      chain(wetStage, wet, sum);
+      output = sum;
+    }
+  }
   output.connect(context.destination);
   source.start();
   const rendered = await context.startRendering();

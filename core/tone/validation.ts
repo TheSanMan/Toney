@@ -59,7 +59,7 @@ export function validateToneSpec(input: unknown): ToneSpec {
   const chain = value.chain.map((inputNode: unknown, index: number) => {
     const path = `tone.chain[${index}]`;
     const node = object(inputNode, path);
-    keys(node, ['id', 'type', 'model', 'enabled', 'parameters'], path, value.schemaVersion === 2 ? ['asset'] : []);
+    keys(node, ['id', 'type', 'model', 'enabled', 'parameters'], path, value.schemaVersion === 2 ? ['asset', 'mix'] : []);
     const id = text(node.id, `${path}.id`);
     if (ids.has(id)) throw new ToneValidationError(`${path}.id`, 'duplicate node ID');
     ids.add(id);
@@ -82,7 +82,7 @@ export function validateToneSpec(input: unknown): ToneSpec {
     const params = object(node.parameters, `${path}.parameters`);
     keys(params, Object.keys(definition.parameters), `${path}.parameters`);
     const parameters = Object.fromEntries(Object.entries(definition.parameters).map(([key, parameter]) => [key, number(params[key], `${path}.parameters.${key}`, parameter.min, parameter.max)]));
-    return { id, type, model, enabled: node.enabled, parameters, ...(asset ? { asset } : {}) };
+    return { id, type, model, enabled: node.enabled, parameters, ...(asset ? { asset } : {}), ...(node.mix !== undefined ? { mix: number(node.mix, `${path}.mix`, 0, 1) } : {}) };
   });
   const metadata = object(value.metadata, 'tone.metadata');
   keys(metadata, ['createdAt', 'updatedAt', 'source'], 'tone.metadata', ['traceId']);

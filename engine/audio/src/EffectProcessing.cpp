@@ -53,11 +53,16 @@ void compress(juce::AudioBuffer<float>& samples, double sampleRate, const juce::
 void saturate(juce::AudioBuffer<float>& samples, double gain, double level)
 {
     const auto normalization = std::tanh(gain);
+    const auto blend = std::min(1.0, gain - 1.0);
     for (int channel = 0; channel < samples.getNumChannels(); ++channel)
     {
         auto* data = samples.getWritePointer(channel);
         for (int frame = 0; frame < samples.getNumSamples(); ++frame)
-            data[frame] = static_cast<float>(std::tanh(static_cast<double>(data[frame]) * gain) / normalization * level);
+        {
+            const auto dry = static_cast<double>(data[frame]);
+            const auto saturated = std::tanh(dry * gain) / normalization;
+            data[frame] = static_cast<float>((dry + blend * (saturated - dry)) * level);
+        }
     }
 }
 
@@ -199,6 +204,9 @@ void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const 
     {
         if (!static_cast<bool>(node["enabled"])) continue;
         const auto type = node["type"].toString();
+        const auto stageMix = node.getDynamicObject()->hasProperty("mix") ? static_cast<double>(node["mix"]) : 1.0;
+        juce::AudioBuffer<float> dry;
+        if (stageMix < 1.0) dry.makeCopyOf(samples);
         if (node["model"].toString() == "cab_ir")
         {
             if (assets == nullptr) throw ControlError("ASSET_MISSING", "Cabinet IR is unavailable.");
@@ -222,9 +230,9 @@ void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const 
             }
             else
             {
-                filter(samples, Coefficients::makeLowShelf(sampleRate, frequency(180, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "bass") - 0.5) * 20))));
-                filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(850, sampleRate), 0.8f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "mid") - 0.5) * 18))));
-                filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2600, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "treble") - 0.5) * 20))));
+                if (parameter(node, "bass") != 0.5) filter(samples, Coefficients::makeLowShelf(sampleRate, frequency(180, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "bass") - 0.5) * 20))));
+                if (parameter(node, "mid") != 0.5) filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(850, sampleRate), 0.8f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "mid") - 0.5) * 18))));
+                if (parameter(node, "treble") != 0.5) filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2600, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "treble") - 0.5) * 20))));
                 samples.applyGain(juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "master") - 0.5) * 24)));
             }
         }
@@ -237,9 +245,9 @@ void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const 
         }
         else if (type == "amp")
         {
-            filter(samples, Coefficients::makeLowShelf(sampleRate, frequency(180, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "bass") - 0.5) * 20))));
-            filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(850, sampleRate), 0.8f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "mid") - 0.5) * 18))));
-            filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2600, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "treble") - 0.5) * 20))));
+            if (parameter(node, "bass") != 0.5) filter(samples, Coefficients::makeLowShelf(sampleRate, frequency(180, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "bass") - 0.5) * 20))));
+            if (parameter(node, "mid") != 0.5) filter(samples, Coefficients::makePeakFilter(sampleRate, frequency(850, sampleRate), 0.8f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "mid") - 0.5) * 18))));
+            if (parameter(node, "treble") != 0.5) filter(samples, Coefficients::makeHighShelf(sampleRate, frequency(2600, sampleRate), 0.707f, juce::Decibels::decibelsToGain(static_cast<float>((parameter(node, "treble") - 0.5) * 20))));
             const auto gain = parameter(node, "gain");
             saturate(samples, 1 + gain * gain * 24, 0.1 + parameter(node, "master") * 0.6);
         }
@@ -259,6 +267,10 @@ void processEffects(juce::AudioBuffer<float>& samples, double sampleRate, const 
         else if (type == "delay") echo(samples, sampleRate, node);
         else if (type == "reverb") room(samples, sampleRate, node);
         else throw ControlError("AUDIO_RENDER_FAILED", "Unsupported native processor.");
+        if (stageMix < 1.0)
+            for (int channel = 0; channel < samples.getNumChannels(); ++channel)
+                for (int frame = 0; frame < samples.getNumSamples(); ++frame)
+                    samples.setSample(channel, frame, static_cast<float>(samples.getSample(channel, frame) * stageMix + dry.getSample(channel, frame) * (1.0 - stageMix)));
     }
 }
 }

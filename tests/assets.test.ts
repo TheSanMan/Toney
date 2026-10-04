@@ -81,18 +81,20 @@ describe('portable local asset contract', () => {
     expect(validateAssetRef({ ...ir, name: '暖かいキャビネット.wav' }).name).toBe('暖かいキャビネット.wav');
   });
 
-  it('selects and clears assets immutably while preserving controls, identity and bypass state', () => {
+  it('selects assets at neutral capture controls and preserves identity, bypass and later capture edits', () => {
     const original = createInitialTone();
     const originalCab = node(original, 'cab');
     const manual = setNodeEnabled(setToneParameter(original, originalCab.id, 'brightness', 0.31), originalCab.id, false);
     const selected = setToneAsset(manual, originalCab.id, ir);
     expect(selected.revision).toBe(manual.revision + 1);
     expect(selected.metadata.source).toBe('manual');
-    expect(node(selected, 'cab')).toEqual({ ...node(manual, 'cab'), model: 'cab_ir', asset: ir });
+    expect(node(selected, 'cab')).toEqual({ ...node(manual, 'cab'), model: 'cab_ir', asset: ir, parameters: { brightness: 0.5, resonance: 0 } });
+    const tuned = setToneParameter(selected, originalCab.id, 'brightness', 0.28);
+    expect(node(setToneAsset(tuned, originalCab.id, { ...ir, id: 'c'.repeat(64) }), 'cab').parameters).toEqual(node(tuned, 'cab').parameters);
     expect(node(manual, 'cab').asset).toBeUndefined();
     const cleared = setToneAsset(selected, originalCab.id, undefined);
     expect(cleared.revision).toBe(selected.revision + 1);
-    expect(node(cleared, 'cab')).toEqual(node(manual, 'cab'));
+    expect(node(cleared, 'cab')).toEqual({ ...node(manual, 'cab'), parameters: { brightness: 0.5, resonance: 0 } });
     expect(node(selected, 'cab').asset).toEqual(ir);
     const selectedAmp = setToneAsset(original, node(original, 'amp').id, nam);
     expect(node(selectedAmp, 'amp').model).toBe('nam');
@@ -188,7 +190,9 @@ describe('portable local asset contract', () => {
     expect(node(darker.tone, 'amp').model).toBe('nam');
     expect(node(darker.tone, 'amp').asset).toEqual(nam);
     expect(node(darker.tone, 'amp').parameters.master).toBe(0.41);
-    expect(node(darker.tone, 'amp').parameters.gain).toBeLessThan(node(wider.tone, 'amp').parameters.gain ?? 0);
+    // A fixed capture's input trim is calibration, not the original amp gain knob.
+    expect(node(darker.tone, 'amp').parameters.gain).toBe(node(wider.tone, 'amp').parameters.gain);
+    expect(node(darker.tone, 'amp').parameters.treble).toBeLessThan(node(wider.tone, 'amp').parameters.treble ?? 0);
     expect(node(darker.tone, 'cab').model).toBe('cab_ir');
     expect(node(darker.tone, 'cab').asset).toEqual(ir);
     expect(node(darker.tone, 'cab').enabled).toBe(false);

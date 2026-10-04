@@ -24,6 +24,23 @@ struct Node
     virtual ~Node() = default;
     virtual void process(float* samples, int frames) noexcept = 0;
 };
+// Every wet/dry stage owns its processing and preallocated dry scratch. Current
+// NAM processors and zero-latency IR convolution add no algorithmic block delay;
+// chorus/echo musical delay remains deliberately unaligned with the dry signal.
+struct Blend final : Node
+{
+    Blend(std::vector<std::unique_ptr<Node>> processors, double value)
+        : nodes(std::move(processors)), mix(static_cast<float>(value)) {}
+    void process(float* samples, int frames) noexcept override
+    {
+        std::copy_n(samples, frames, dry.data());
+        for (const auto& node : nodes) node->process(samples, frames);
+        for (int i = 0; i < frames; ++i) samples[i] = dry[static_cast<std::size_t>(i)] * (1 - mix) + samples[i] * mix;
+    }
+    std::vector<std::unique_ptr<Node>> nodes;
+    float mix;
+    std::array<float, RealtimeProcessor::maxBlockSize> dry{};
+};
 struct Gain final : Node
 {
     explicit Gain(float value) : gain(value) {}
@@ -40,10 +57,17 @@ struct Filter final : Node
 };
 struct Saturation final : Node
 {
-    Saturation(double gainValue, double levelValue) : gain(gainValue), level(levelValue / std::tanh(gainValue)) {}
+    Saturation(double gainValue, double levelValue) : gain(gainValue), level(levelValue), normalization(std::tanh(gainValue)), blend(std::min(1.0, gainValue - 1.0)) {}
     void process(float* samples, int frames) noexcept override
-    { for (int i = 0; i < frames; ++i) samples[i] = static_cast<float>(std::tanh(samples[i] * gain) * level); }
-    double gain, level;
+    {
+        for (int i = 0; i < frames; ++i)
+        {
+            const auto dry = static_cast<double>(samples[i]);
+            const auto saturated = std::tanh(dry * gain) / normalization;
+            samples[i] = static_cast<float>((dry + blend * (saturated - dry)) * level);
+        }
+    }
+    double gain, level, normalization, blend;
 };
 struct Compressor final : Node
 {
@@ -221,6 +245,7 @@ public:
         for (const auto& node : *tone["chain"].getArray())
         {
             if (!static_cast<bool>(node["enabled"])) continue;
+            const auto stageStart = nodes.size();
             const auto type = node["type"].toString();
             const auto model = node["model"].toString();
             if (model == "nam")
@@ -243,6 +268,8 @@ public:
             {
                 if (!assets) throw ControlError("ASSET_MISSING", "Cabinet IR is unavailable.");
                 auto cabinet = std::make_unique<Cabinet>(sr, assets->get(node["asset"]["id"].toString()));
+                if (cabinet->convolution.getLatency() != 0)
+                    throw ControlError("LIVE_PROCESSING_FAILED", "Live cabinet mixing requires zero-latency convolution.");
                 latency += cabinet->convolution.getLatency();
                 nodes.push_back(std::move(cabinet));
                 filter(Coefficients::makePeakFilter(sr, frequency(145, sr), 1.1f, dbGain(parameter(node, "resonance") * 5)));
@@ -277,6 +304,15 @@ public:
             else if (type == "delay") nodes.push_back(std::make_unique<Echo>(sr, node));
             else if (type == "reverb") nodes.push_back(std::make_unique<Room>(sr, node));
             else throw ControlError("LIVE_PROCESSING_FAILED", "Unsupported live processor.");
+            const auto mix = node.getDynamicObject()->hasProperty("mix") ? static_cast<double>(node["mix"]) : 1.0;
+            if (mix < 1.0)
+            {
+                std::vector<std::unique_ptr<Node>> stage;
+                stage.reserve(nodes.size() - stageStart);
+                for (auto index = stageStart; index < nodes.size(); ++index) stage.push_back(std::move(nodes[index]));
+                nodes.resize(stageStart);
+                nodes.push_back(std::make_unique<Blend>(std::move(stage), mix));
+            }
         }
         gain(dbGain(outputDb));
     }
@@ -284,9 +320,9 @@ public:
     void filter(const Coefficients::Ptr& coefficients) { nodes.push_back(std::make_unique<Filter>(coefficients)); }
     void ampEq(const juce::var& node, double sr)
     {
-        filter(Coefficients::makeLowShelf(sr, frequency(180, sr), 0.707f, dbGain((parameter(node, "bass") - 0.5) * 20)));
-        filter(Coefficients::makePeakFilter(sr, frequency(850, sr), 0.8f, dbGain((parameter(node, "mid") - 0.5) * 18)));
-        filter(Coefficients::makeHighShelf(sr, frequency(2600, sr), 0.707f, dbGain((parameter(node, "treble") - 0.5) * 20)));
+        if (parameter(node, "bass") != 0.5) filter(Coefficients::makeLowShelf(sr, frequency(180, sr), 0.707f, dbGain((parameter(node, "bass") - 0.5) * 20)));
+        if (parameter(node, "mid") != 0.5) filter(Coefficients::makePeakFilter(sr, frequency(850, sr), 0.8f, dbGain((parameter(node, "mid") - 0.5) * 18)));
+        if (parameter(node, "treble") != 0.5) filter(Coefficients::makeHighShelf(sr, frequency(2600, sr), 0.707f, dbGain((parameter(node, "treble") - 0.5) * 20)));
     }
     std::vector<std::unique_ptr<Node>> nodes;
     std::array<float, maxBlockSize> work{};
@@ -329,7 +365,11 @@ void RealtimeProcessor::process(const float* input, float* output, int frames) n
             std::fill_n(output, frames, 0.0f);
             return;
         }
-        output[i] = std::clamp(value, -0.85f, 0.85f);
+        // A continuous soft knee avoids the old flat-topped ±0.85 clipping.
+        // Below 0.70 the signal is untouched; overload approaches ±0.85.
+        const auto magnitude = std::abs(value);
+        output[i] = magnitude <= 0.70f ? value
+            : std::copysign(0.70f + 0.15f * std::tanh((magnitude - 0.70f) / 0.15f), value);
     }
 }
 }

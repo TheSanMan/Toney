@@ -11,7 +11,7 @@ export const EFFECT_CATALOG: Record<NodeType, EffectDefinition> = {
   eq: { name: 'EQ', model: 'builtin_eq', parameters: { lowDb: eq('Low'), midDb: eq('Mid'), highDb: eq('High') } },
   chorus: { name: 'Chorus', model: 'builtin_chorus', parameters: { rate: { label: 'Rate', min: 0.1, max: 5, default: 0.8, unit: 'Hz' }, depth: knob('Depth', 0.3), mix: knob('Mix', 0) } },
   delay: { name: 'Delay', model: 'builtin_delay', parameters: { time: { label: 'Time', min: 0.05, max: 1, default: 0.3, unit: 's' }, feedback: { label: 'Feedback', min: 0, max: 0.8, default: 0.25 }, mix: knob('Mix', 0) } },
-  reverb: { name: 'Reverb', model: 'builtin_reverb', parameters: { decay: { label: 'Decay', min: 0.2, max: 5, default: 1.2, unit: 's' }, mix: knob('Mix', 0.12) } },
+  reverb: { name: 'Reverb', model: 'builtin_reverb', parameters: { decay: { label: 'Decay', min: 0.2, max: 5, default: 1.2, unit: 's' }, mix: knob('Mix', 0) } },
 };
 
 /** External processing retains the same parameter contract; these controls surround the imported model. */

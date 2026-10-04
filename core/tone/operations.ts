@@ -57,6 +57,8 @@ export function setToneAsset(input: ToneSpec, nodeId: string, inputAsset: AssetR
     // Builtin distortion gain/level have different meanings from capture trims.
     // First pedal selection auditions the exported capture at unity gain and EQ.
     if (node.type === 'drive' && node.model !== 'nam') node.parameters = { gain: 0.5, tone: 0.5, level: 0.5 };
+    if (node.type === 'amp' && node.model !== 'nam') node.parameters = { gain: 0.5, bass: 0.5, mid: 0.5, treble: 0.5, master: 0.5 };
+    if (node.type === 'cab' && node.model !== 'cab_ir') node.parameters = { brightness: 0.5, resonance: 0 };
     node.asset = asset;
     node.model = node.type === 'cab' ? 'cab_ir' : 'nam';
   }
@@ -71,4 +73,46 @@ export function collectToneAssets(input: ToneSpec): AssetRef[] {
     if (node.enabled && node.asset) assets.set(`${node.asset.kind}:${node.asset.id}`, node.asset);
   }
   return [...assets.values()];
+}
+
+/** Add an independent stage; pedals default to the position immediately before the amp. */
+export function appendToneNode(input: ToneSpec, type: NodeType, asset?: AssetRef, afterNodeId?: string): ToneSpec {
+  const tone = cloneTone(input);
+  if (tone.chain.length >= 32) throw new ToneValidationError('tone.chain', 'the rig already has 32 stages');
+  const node = createNode(type);
+  const after = afterNodeId === undefined ? -1 : tone.chain.findIndex((entry) => entry.id === afterNodeId);
+  if (afterNodeId !== undefined && after < 0) throw new ToneValidationError('nodeId', 'unknown insertion stage');
+  const amp = tone.chain.findIndex((entry) => entry.type === 'amp');
+  const index = afterNodeId !== undefined ? after + 1 : type === 'drive' && amp >= 0 ? amp : tone.chain.length;
+  tone.chain.splice(index, 0, node);
+  if (asset) return setToneAsset(tone, node.id, asset);
+  return revised(tone, 'manual');
+}
+
+export function removeToneNode(input: ToneSpec, nodeId: string): ToneSpec {
+  const tone = cloneTone(input);
+  const index = tone.chain.findIndex((entry) => entry.id === nodeId);
+  if (index < 0) throw new ToneValidationError('nodeId', 'unknown stage');
+  if (tone.chain.length === 1) throw new ToneValidationError('tone.chain', 'keep at least one stage');
+  tone.chain.splice(index, 1);
+  return revised(tone, 'manual');
+}
+
+export function moveToneNode(input: ToneSpec, nodeId: string, direction: -1 | 1): ToneSpec {
+  const tone = cloneTone(input);
+  const index = tone.chain.findIndex((entry) => entry.id === nodeId);
+  if (index < 0) throw new ToneValidationError('nodeId', 'unknown stage');
+  if (direction !== -1 && direction !== 1) throw new ToneValidationError('direction', 'expected -1 or 1');
+  const destination = index + direction;
+  if (destination < 0 || destination >= tone.chain.length) return tone;
+  [tone.chain[index], tone.chain[destination]] = [tone.chain[destination]!, tone.chain[index]!];
+  return revised(tone, 'manual');
+}
+
+export function setToneNodeMix(input: ToneSpec, nodeId: string, mix: number): ToneSpec {
+  const tone = cloneTone(input);
+  const node = tone.chain.find((entry) => entry.id === nodeId);
+  if (!node) throw new ToneValidationError('nodeId', 'unknown stage');
+  node.mix = number(mix, 'mix', 0, 1);
+  return revised(tone, 'manual');
 }

@@ -28,6 +28,8 @@ export interface ToneNode {
   enabled: boolean;
   parameters: Record<string, number>;
   asset?: AssetRef;
+  /** Whole-stage wet/dry blend; omitted means fully processed. */
+  mix?: number;
 }
 
 export interface ToneSpec {
@@ -52,6 +54,6 @@ export const DEFAULT_INTENT: ToneIntent = {
   character: { brightness: 0.5, warmth: 0.5, aggression: 0.25, clarity: 0.65, sustain: 0.3, width: 0.1 },
   distortion: { amount: 0.2, texture: 'crunch' },
   dynamics: { compression: 0.2, transientPreservation: 0.7 },
-  space: { reverb: 0.12, delay: 0 },
+  space: { reverb: 0, delay: 0 },
   references: [],
 };
