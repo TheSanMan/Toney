@@ -6,10 +6,11 @@ import { isDesktop } from './bridge';
 import { cancelTone3000, downloadTone3000, getTone3000Status, selectTone3000 } from './tone3000';
 import type { NativeDiagnostic } from './AudioDevicesPanel';
 
-export function Tone3000Panel({ locked, onDownloaded, onDiagnostic }: {
+export function Tone3000Panel({ locked, onDownloaded, onDiagnostic, browseRequest }: {
   locked: boolean;
   onDownloaded: (descriptor: NativeAssetDescriptor) => void;
   onDiagnostic: (diagnostic: NativeDiagnostic) => void;
+  browseRequest?: { target: Tone3000Target; query: string; id: string };
 }) {
   const [state, setState] = useState<Tone3000Status>();
   const [working, setWorking] = useState(false);
@@ -18,6 +19,7 @@ export function Tone3000Panel({ locked, onDownloaded, onDiagnostic }: {
   const [modelId, setModelId] = useState<number>();
   const operation = useRef(0);
   const mounted = useRef(true);
+  const lastBrowseRequest = useRef<string | undefined>(undefined);
   const desktop = isDesktop();
   const waiting = state?.status === 'authorizing' || state?.status === 'loading';
 
@@ -60,6 +62,14 @@ export function Tone3000Panel({ locked, onDownloaded, onDiagnostic }: {
     finally { if (mounted.current) setWorking(false); }
   }
 
+  useEffect(() => {
+    if (!browseRequest || lastBrowseRequest.current === browseRequest.id || !desktop || locked || working || waiting) return;
+    lastBrowseRequest.current = browseRequest.id;
+    void browse(browseRequest.target);
+    // An explicit recommendation click initiates one selection; catalog searches
+    // are entered in TONE3000 because Select does not document a query parameter.
+  }, [browseRequest, desktop, locked, working, waiting]);
+
   async function cancel() {
     operation.current += 1;
     setWorking(true); setError(''); setMessage('');
@@ -87,15 +97,16 @@ export function Tone3000Panel({ locked, onDownloaded, onDiagnostic }: {
   const selectedId = selection?.models.some((model) => model.id === modelId) ? modelId : selection?.models[0]?.id;
   return <div className="tone3000-panel">
     <div className="tone3000-heading"><img src="/tone3000-logo.svg" alt="TONE3000" width="210" height="32" /><span>AMP & PEDAL CAPTURES · CABINET IRS</span></div>
-    <p>Browse and audition real gear on TONE3000. Sign in there, choose a tone, then download a model here. Each downloaded model stays in your local library.</p>
+    <p>Browse and audition gear in Toney's TONE3000 window. Sign in once in that window, choose a capture, then download it into your offline library.</p>
+    {browseRequest && <p className="asset-status">Recommended search: <strong>{browseRequest.query}</strong>. Enter this in the catalog search.</p>}
     <div className="native-actions">
-      <button disabled={!desktop || locked || working || waiting} onClick={() => void browse('amp')}>Browse amp models ↗</button>
-      <button disabled={!desktop || locked || working || waiting} onClick={() => void browse('drive')}>Browse NAM pedals ↗</button>
-      <button disabled={!desktop || locked || working || waiting} onClick={() => void browse('cab')}>Browse cabinet IRs ↗</button>
+      <button disabled={!desktop || locked || working || waiting} onClick={() => void browse('amp')}>Browse amps</button>
+      <button disabled={!desktop || locked || working || waiting} onClick={() => void browse('drive')}>Browse NAM pedals</button>
+      <button disabled={!desktop || locked || working || waiting} onClick={() => void browse('cab')}>Browse cabinets</button>
       {desktop && state && state.status !== 'idle' && <button disabled={locked || working} onClick={() => void cancel()}>Close selection / disconnect</button>}
     </div>
     {!desktop && <small>Open Toney desktop to connect your TONE3000 account and download models.</small>}
-    {waiting && <p className="asset-status" role="status">{state.status === 'authorizing' ? 'Choose a tone in the browser. It will return to Toney automatically.' : 'Loading the selected tone and its model variants…'}</p>}
+    {waiting && <p className="asset-status" role="status">{state.status === 'authorizing' ? 'The TONE3000 window is open. Preview and select a capture there; close that window or cancel here to return.' : 'Loading the selected tone and its model variants…'}</p>}
     {selection && <div className="tone3000-selection">
       <strong>{selection.name}</strong>
       <small>{state?.target === 'drive' ? 'Pedal · NAM A1' : state?.kind === 'nam' ? 'Amp · NAM A1' : 'Cabinet · IR'} · {selection.creator} · {selection.license}</small>
@@ -108,6 +119,6 @@ export function Tone3000Panel({ locked, onDownloaded, onDiagnostic }: {
     {state?.error && <p className="native-error" role="alert">{state.error.code}: {state.error.message} · {state.requestId}</p>}
     {message && <p className="asset-status" role="status">{message}</p>}
     {error && <p className="native-error" role="alert">{error}</p>}
-    <small>Powered by TONE3000 · Amp and pedal browsing shows supported A1 captures. NAM drive/boost/fuzz captures can replace the builtin Drive block; A2 and parametric captures are not supported yet.</small>
+    <small>Powered by TONE3000 · Supported A1 NAM captures and cabinet IRs. Use dynamic effects such as chorus alongside captures; A2 and parametric captures are not supported yet.</small>
   </div>;
 }

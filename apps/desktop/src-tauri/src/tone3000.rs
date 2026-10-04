@@ -13,8 +13,7 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tauri::Manager;
-use tauri_plugin_shell::ShellExt;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use url::Url;
 
 const CLIENT_ID: &str = "t3k_pub_RRl-FnMtNQXyn4GNHiAgwg0SeyTcvpFb";
@@ -22,6 +21,97 @@ pub(super) const REDIRECT_URI: &str = "toney://tone3000/callback";
 const API: &str = "https://www.tone3000.com/api/v1";
 const MAX_JSON: usize = 2 * 1024 * 1024;
 const MAX_ID: u64 = 9_007_199_254_740_991;
+const BROWSER_PREFIX: &str = "tone3000-browser-";
+
+// This remote browsing surface has no Tauri capability or local command access.
+// HTTPS is allowed for TONE3000's sign-in providers; local/custom schemes are
+// rejected, except the exact state-bound callback handled below.
+fn browser_navigation(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+}
+
+fn close_browsers(app: &tauri::AppHandle) {
+    for (label, window) in app.webview_windows() {
+        if label.starts_with(BROWSER_PREFIX) {
+            let _ = window.close();
+        }
+    }
+}
+
+fn close_browser(app: &tauri::AppHandle, generation: u64) {
+    if let Some(window) = app.get_webview_window(&format!("{BROWSER_PREFIX}{generation}")) {
+        let _ = window.close();
+    }
+}
+
+fn cancel_pending(session: &mut Session, generation: u64) {
+    if session.generation == generation && session.phase == Phase::Authorizing {
+        *session = Session {
+            generation: generation.wrapping_add(1),
+            ..Session::default()
+        };
+    }
+}
+
+fn open_browser(app: &tauri::AppHandle, url: Url, generation: u64) -> tauri::Result<()> {
+    close_browsers(app);
+    let label = format!("{BROWSER_PREFIX}{generation}");
+    let navigation_app = app.clone();
+    let popup_app = app.clone();
+    let popup_label = label.clone();
+    let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+        .title("TONE3000 · Choose gear for Toney")
+        .inner_size(1100.0, 800.0)
+        .min_inner_size(720.0, 560.0)
+        .center()
+        // Asset downloads go through the validated native import command.
+        .on_download(|_, _| false)
+        .on_navigation(move |url| {
+            if callback(url).is_ok() {
+                let app = navigation_app.clone();
+                let url = url.clone();
+                tauri::async_runtime::spawn(handle_callback(app, url));
+                false
+            } else {
+                browser_navigation(url)
+            }
+        })
+        .on_new_window(move |url, _| {
+            // Keep catalog links in this same in-app surface.
+            if browser_navigation(&url) {
+                let app = popup_app.clone();
+                let label = popup_label.clone();
+                let _ = popup_app.run_on_main_thread(move || {
+                    if let Some(window) = app.get_webview_window(&label) {
+                        let _ = window.navigate(url);
+                    }
+                });
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()?;
+    let closed_app = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Destroyed) {
+            let state = closed_app.state::<Tone3000State>();
+            if let Ok(mut session) = lock(&state) {
+                cancel_pending(&mut session, generation);
+            };
+        }
+    });
+    let state = app.state::<Tone3000State>();
+    let still_pending = lock(&state)
+        .map(|session| session.generation == generation && session.phase == Phase::Authorizing)
+        .unwrap_or(false);
+    if !still_pending {
+        let _ = window.close();
+    }
+    Ok(())
+}
 
 #[derive(Default)]
 pub(super) struct Tone3000State(Mutex<Session>);
@@ -281,9 +371,7 @@ pub(super) async fn native_tone3000_select(
         };
         generation
     };
-    // Only a generated, fixed-origin OAuth URL reaches the existing native shell plugin.
-    #[allow(deprecated)]
-    let opened = app.shell().open(url.as_str(), None);
+    let opened = open_browser(&app, url, generation);
     if opened.is_err() {
         let state = app.state::<Tone3000State>();
         let mut session = lock(&state)?;
@@ -292,7 +380,7 @@ pub(super) async fn native_tone3000_select(
             session.phase = Phase::Error;
             session.error = Some(error(
                 "TONE3000_BROWSER_FAILED",
-                "Cannot open your browser. Close this selection and try again.",
+                "Cannot open the TONE3000 window. Close this selection and try again.",
             ));
         }
     }
@@ -312,18 +400,22 @@ pub(super) async fn native_tone3000_status(
 }
 #[tauri::command]
 pub(super) async fn native_tone3000_cancel(
-    state: tauri::State<'_, Tone3000State>,
+    app: tauri::AppHandle,
     request: Value,
 ) -> Result<Value, NativeError> {
     let request: Request = decode(request)?;
     validate_request(request.protocol_version, &request.request_id)?;
+    let state = app.state::<Tone3000State>();
     let mut session = lock(&state)?;
     let generation = session.generation.wrapping_add(1);
     *session = Session {
         generation,
         ..Session::default()
     };
-    Ok(status(&mut session, &request.request_id))
+    let output = status(&mut session, &request.request_id);
+    drop(session);
+    close_browsers(&app);
+    Ok(output)
 }
 struct Callback {
     state: String,
@@ -935,16 +1027,23 @@ pub(super) async fn handle_callback(app: tauri::AppHandle, url: Url) {
     let Ok(returned) = callback(&url) else {
         return;
     };
-    let operation = {
+    let (operation, browser_generation) = {
         let state = app.state::<Tone3000State>();
         let Ok(mut session) = lock(&state) else {
             return;
         };
+        let browser_generation = session.generation;
         let Ok(operation) = consume_callback(&mut session, returned) else {
             return;
         };
-        operation
+        (operation, browser_generation)
     };
+    // Close only after state validation and consumption. Closing an unrelated
+    // or stale callback must never cancel the active browser/session.
+    close_browser(&app, browser_generation);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_focus();
+    }
     let Some(AuthorizationGrant {
         generation,
         target,
@@ -1417,5 +1516,41 @@ mod tests {
                 .count()
                 < 200
         );
+    }
+    #[test]
+    fn embedded_browser_rejects_local_protocols_and_close_is_generation_bound() {
+        for value in [
+            "file:///etc/passwd",
+            "http://127.0.0.1:5173",
+            "tauri://localhost",
+            "toney://chatgpt/callback",
+            "https://user:password@www.tone3000.com",
+            "https://www.tone3000.com:8443",
+            "javascript:alert(1)",
+        ] {
+            assert!(!browser_navigation(&Url::parse(value).unwrap()), "{value}");
+        }
+        assert!(browser_navigation(
+            &Url::parse("https://www.tone3000.com/search").unwrap()
+        ));
+        assert!(browser_navigation(
+            &Url::parse("https://accounts.google.com/").unwrap()
+        ));
+        let mut session = Session {
+            generation: 7,
+            phase: Phase::Authorizing,
+            ..Session::default()
+        };
+        cancel_pending(&mut session, 6);
+        assert_eq!(session.generation, 7);
+        assert!(session.phase == Phase::Authorizing);
+        session.phase = Phase::Loading;
+        cancel_pending(&mut session, 7);
+        assert!(session.phase == Phase::Loading);
+        session.phase = Phase::Authorizing;
+        cancel_pending(&mut session, 7);
+        assert_eq!(session.generation, 8);
+        assert!(session.phase == Phase::Idle);
+        assert!(session.pending.is_none());
     }
 }
