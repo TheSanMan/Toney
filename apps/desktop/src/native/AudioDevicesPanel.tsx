@@ -12,9 +12,10 @@ export interface NativeDiagnostic {
   error?: { code: string; message: string };
 }
 
-export function AudioDevicesPanel({ tone, locked, onDiagnostic, onMonitoringChange }: {
+export function AudioDevicesPanel({ tone, locked, onDiagnostic, onMonitoringChange, onDirect }: {
   tone: ToneSpec; locked: boolean; onDiagnostic: (diagnostic: NativeDiagnostic) => void;
   onMonitoringChange: (active: boolean) => void;
+  onDirect?: () => void;
 }) {
   const desktop = isDesktop();
   const [info, setInfo] = useState<EngineInfo>();
@@ -62,25 +63,15 @@ export function AudioDevicesPanel({ tone, locked, onDiagnostic, onMonitoringChan
   }, []);
 
   const currentValidated = validation?.toneId === tone.id && validation.revision === tone.revision;
-  return <section className="native-panel">
-    <div className="native-heading"><div><span className="eyebrow">AUDIO DEVICES</span>
-      <p>{desktop ? 'Select your guitar interface below · discovery keeps input closed' : 'Open the desktop app for system audio devices'}</p></div>
-      <span className={`native-status ${info ? 'ready' : ''}`}>{desktop ? (info ? 'NATIVE CONTROL READY' : (error ? 'NATIVE CONTROL UNAVAILABLE' : 'CHECKING NATIVE CONTROL')) : 'BROWSER AUDITION'}</span>
-    </div>
-    {desktop && <>
-      <div className="device-groups">{(['input', 'output'] as const).map((kind) => <div className="device-group" key={kind}>
-        <span>{kind === 'input' ? 'INPUTS' : 'OUTPUTS'}</span>
-        {inventory ? (inventory.devices.filter((device) => device.kind === kind).length === 0
-          ? <p>No {kind} devices found.</p> : inventory.devices.filter((device) => device.kind === kind).map((device) =>
-            <div className="device-row" key={device.id}><strong>{device.name}</strong><small>{device.isDefault ? 'SYSTEM DEFAULT' : device.backend}</small></div>))
-          : <p>{working ? 'Scanning devices…' : 'Device scan unavailable.'}</p>}
-      </div>)}</div>
+  return <section className="native-panel audio-console">
+    {onDirect && <button className="direct-tone" disabled={locked} onClick={onDirect}>Dry / direct · no room</button>}
+    <LiveInputPanel tone={tone} inventory={inventory} locked={locked} onDiagnostic={onDiagnostic} onMonitoringChange={onMonitoringChange} />
+    {desktop && <details className="audio-diagnostics"><summary>Device tools · {info ? 'engine ready' : working ? 'scanning' : 'check connection'}</summary>
       <div className="native-actions"><button disabled={locked || working} onClick={() => void refresh()}>Refresh devices</button>
         <button disabled={locked || working} onClick={() => void validate()}>Validate current rig</button>
         <span className={currentValidated ? 'validated' : ''}>{currentValidated ? `Native schema check passed · revision ${tone.revision}` : (validation ? 'Rig changed · validate the current revision' : 'Current rig has not been validated natively')}</span>
       </div>
       {error && <p className="native-error" role="alert">{error}</p>}
-    </>}
-    <LiveInputPanel tone={tone} inventory={inventory} locked={locked} onDiagnostic={onDiagnostic} onMonitoringChange={onMonitoringChange} />
+    </details>}
   </section>;
 }

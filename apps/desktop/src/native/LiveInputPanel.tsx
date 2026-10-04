@@ -16,13 +16,33 @@ export function createLiveQueue() {
   };
 }
 
+const LIVE_SETTINGS_KEY = 'toney.live.settings.v1';
+const DEFAULT_SETTINGS: LiveConfiguration = { inputDeviceId: '', outputDeviceId: '', inputChannel: 0,
+  sampleRate: 48000, bufferSize: 128, inputGainDb: 0, outputGainDb: -12 };
+
+export function readLiveSettings(): LiveConfiguration {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(LIVE_SETTINGS_KEY) ?? 'null');
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...DEFAULT_SETTINGS };
+    const row = value as Record<string, unknown>;
+    if (typeof row.inputDeviceId !== 'string' || row.inputDeviceId.length > 1000
+      || typeof row.outputDeviceId !== 'string' || row.outputDeviceId.length > 1000
+      || typeof row.inputChannel !== 'number' || !Number.isInteger(row.inputChannel) || row.inputChannel < 0 || row.inputChannel > 31
+      || ![44100, 48000, 96000].includes(row.sampleRate as number) || ![64, 128, 256, 512].includes(row.bufferSize as number)
+      || typeof row.inputGainDb !== 'number' || !Number.isFinite(row.inputGainDb) || row.inputGainDb < -24 || row.inputGainDb > 24
+      || typeof row.outputGainDb !== 'number' || !Number.isFinite(row.outputGainDb) || row.outputGainDb < -60 || row.outputGainDb > 0) return { ...DEFAULT_SETTINGS };
+    return { inputDeviceId: row.inputDeviceId, outputDeviceId: row.outputDeviceId, inputChannel: row.inputChannel,
+      sampleRate: row.sampleRate as LiveConfiguration['sampleRate'], bufferSize: row.bufferSize as LiveConfiguration['bufferSize'],
+      inputGainDb: row.inputGainDb, outputGainDb: row.outputGainDb };
+  } catch { return { ...DEFAULT_SETTINGS }; }
+}
+
 export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonitoringChange }: {
   tone: ToneSpec; inventory?: DeviceInventory; locked: boolean;
   onDiagnostic: (diagnostic: NativeDiagnostic) => void; onMonitoringChange: (active: boolean) => void;
 }) {
   const desktop = isDesktop();
-  const [settings, setSettings] = useState<LiveConfiguration>({ inputDeviceId: '', outputDeviceId: '', inputChannel: 0,
-    sampleRate: 48000, bufferSize: 128, inputGainDb: 0, outputGainDb: -12 });
+  const [settings, setSettings] = useState<LiveConfiguration>(readLiveSettings);
   const [status, setStatus] = useState<LiveStatus>();
   const [appliedGains, setAppliedGains] = useState<{ inputGainDb: number; outputGainDb: number }>();
   const [working, setWorking] = useState(false);
@@ -38,6 +58,10 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
   const running = status?.state === 'running';
   const current = running && status.toneId === tone.id && status.revision === tone.revision
     && appliedGains?.inputGainDb === settings.inputGainDb && appliedGains.outputGainDb === settings.outputGainDb;
+
+  useEffect(() => {
+    try { localStorage.setItem(LIVE_SETTINGS_KEY, JSON.stringify(settings)); } catch { /* The session still works without local storage. */ }
+  }, [settings]);
 
   function accept(result: LiveStatus, requestId: string, durationMs: number) {
     setStatus(result);
@@ -129,11 +153,10 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
 
   return <div className="live-input-panel">
     <div className="native-heading"><div><span className="eyebrow">LIVE GUITAR</span>
-      <p>{desktop ? 'Guitar → interface instrument input → Toney → interface headphones' : 'Live guitar input requires the Toney desktop app.'}</p></div>
+      <p>{desktop ? 'Plug in. Choose your interface. Play.' : 'Live guitar input requires the Toney desktop app.'}</p></div>
       <span className={`native-status ${running ? 'ready' : ''}`}>{running ? `LIVE · R${status.revision}` : 'INPUT CLOSED'}</span>
     </div>
     {desktop ? <>
-      <p className="preview-note">Connect your guitar to an audio interface’s instrument / Hi-Z input. Choose its input and headphone output below. Turn the interface’s direct monitor off to hear only Toney. Allow microphone access when macOS asks.</p>
       <div className="live-settings">
         {(['input', 'output'] as const).map((kind) => <label key={kind}>{kind === 'input' ? 'Guitar input device' : 'Headphone output device'}
           <select value={settings[`${kind}DeviceId`]} disabled={frozen} onChange={(event) => set(`${kind}DeviceId`, event.target.value)}>
@@ -142,15 +165,17 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
           </select></label>)}
         <label>Guitar input channel<input type="number" min="1" max="32" step="1" value={settings.inputChannel + 1} disabled={frozen}
           onChange={(event) => set('inputChannel', Number(event.target.value) - 1)} /></label>
+        <label>Output volume · {settings.outputGainDb} dB<input type="range" min="-60" max="0" step="1" value={settings.outputGainDb} disabled={working || stopping}
+          onChange={(event) => set('outputGainDb', Number(event.target.value))} /></label>
+      </div>
+      <details className="live-advanced"><summary>Audio setup · {settings.sampleRate / 1000} kHz · {settings.bufferSize} samples</summary><div className="live-settings">
         <label>Sample rate<select value={settings.sampleRate} disabled={frozen} onChange={(event) => set('sampleRate', Number(event.target.value) as LiveConfiguration['sampleRate'])}>
           {[44100, 48000, 96000].map((rate) => <option key={rate} value={rate}>{rate / 1000} kHz</option>)}</select></label>
         <label>Buffer<select value={settings.bufferSize} disabled={frozen} onChange={(event) => set('bufferSize', Number(event.target.value) as LiveConfiguration['bufferSize'])}>
           {[64, 128, 256, 512].map((size) => <option key={size} value={size}>{size} samples</option>)}</select></label>
         <label>Input trim · {settings.inputGainDb} dB<input type="range" min="-24" max="24" step="1" value={settings.inputGainDb} disabled={working || stopping}
           onChange={(event) => set('inputGainDb', Number(event.target.value))} /></label>
-        <label>Output volume · {settings.outputGainDb} dB<input type="range" min="-60" max="0" step="1" value={settings.outputGainDb} disabled={working || stopping}
-          onChange={(event) => set('outputGainDb', Number(event.target.value))} /></label>
-      </div>
+      </div><p className="preview-note">Use the interface’s instrument / Hi-Z input and wired headphones. Turn direct monitor off. Allow microphone access when macOS asks. NAM captures must match the sample rate; 48 kHz is typical. Device changes require Stop → Start. Rig and gain changes require Apply.</p></details>
       <div className="native-actions">
         <button className="primary" disabled={locked || frozen || missingDevice} onClick={() => void control('start')}>Start live guitar</button>
         <button disabled={stopping || (!running && !working && status?.state !== 'error')} onClick={() => void control('stop')}>{stopping ? 'Stopping…' : 'Stop live guitar'}</button>
@@ -163,11 +188,10 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
           return <label key={kind}>{kind === 'input' ? 'Input' : 'Output'} · {peak > 0 ? `${(20 * Math.log10(peak)).toFixed(1)} dBFS` : '−∞ dBFS'}{kind === 'input' && peak >= 0.99 ? ' · CLIPPING' : kind === 'output' && peak >= 0.8499 ? ' · LEVEL CEILING' : ''}
             <meter aria-label={`${kind} signal level`} min={0} max={1} low={0.01} high={0.9} optimum={0.5} value={Math.min(peak, 1)} /></label>;
         })}</div>
-        <p className="preview-note">Actual: {status.sampleRate / 1000} kHz · {status.bufferSize} samples · {status.latencyMs.toFixed(1)} ms estimated device + buffer latency · {(status.cpuLoad * 100).toFixed(1)}% callback load · {status.overruns} deadline overruns. Mono guitar feeds the output channels.</p>
+        <p className="live-performance">{status.latencyMs.toFixed(1)} ms estimated latency · {(status.cpuLoad * 100).toFixed(1)}% processing load · {status.overruns} overruns</p>
         {status.overruns > 0 && <p className="native-error">Audio has missed its processing deadline. Stop, choose a larger buffer, and start again if you hear clicks.</p>}
         {status.outputPeak >= 0.8499 && <p className="preview-note">Output is reaching the level ceiling. Lower Output volume and press Apply to reduce clipping.</p>}
       </>}
-      <p className="preview-note">Device and channel changes require Stop → Start. Rig and gain changes take effect when you press Apply. NAM captures must match the live sample rate; 48 kHz is typical.</p>
       {error && <p className="native-error" role="alert">{error}</p>}
     </> : <p className="preview-note">In desktop, choose your audio interface, press Start live guitar, then play. The browser workbench can audition recordings and the demo phrase.</p>}
   </div>;

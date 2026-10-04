@@ -5,6 +5,7 @@ import { NativeError } from '../../../../core/native/protocol';
 import { importNativeAsset, isDesktop, listNativeAssets } from './bridge';
 import type { NativeDiagnostic } from './AudioDevicesPanel';
 import { Tone3000Panel } from './Tone3000Panel';
+import type { Tone3000Target } from '../../../../core/native/tone3000';
 
 function describe(info: NativeAssetInfo): string {
   const rate = `${(info.sampleRate / 1000).toFixed(1)} kHz`;
@@ -13,10 +14,12 @@ function describe(info: NativeAssetInfo): string {
     : `${info.architecture} · ${rate} · model ${info.modelVersion}`;
 }
 
-export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
+export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic, onAssets, browseRequest }: {
   tone: ToneSpec; locked: boolean;
   onSelect: (nodeId: string, asset?: AssetRef) => void;
   onDiagnostic: (diagnostic: NativeDiagnostic) => void;
+  onAssets?: (assets: NativeAssetDescriptor[]) => void;
+  browseRequest?: { target: Tone3000Target; query: string; id: string };
 }) {
   const desktop = isDesktop();
   const [assets, setAssets] = useState<NativeAssetDescriptor[]>([]);
@@ -69,12 +72,14 @@ export function AssetLibraryPanel({ tone, locked, onSelect, onDiagnostic }: {
     // Imports and the explicit refresh button update the inventory after mount.
   }, []);
 
+  useEffect(() => { onAssets?.(assets); }, [assets, onAssets]);
+
   return <section className="native-panel asset-panel">
     <div className="native-heading"><div><span className="eyebrow">NAM AMPS & PEDALS · CABINET IRS</span>
       <p>{desktop ? 'Download community models or import captures, then use them in any rig.' : 'Open Toney desktop to download and hear NAM captures and cabinet IRs.'}</p></div>
       <span className="native-status">{working ? 'CHECKING ASSET…' : `${assets.length} LOCAL ASSETS`}</span>
     </div>
-    <Tone3000Panel locked={locked || working}
+    <Tone3000Panel locked={locked || working} browseRequest={browseRequest}
       onDownloaded={(descriptor) => setAssets((current) => [...current.filter((item) => item.asset.id !== descriptor.asset.id), descriptor])}
       onDiagnostic={onDiagnostic} />
     {desktop && <div className="native-actions">

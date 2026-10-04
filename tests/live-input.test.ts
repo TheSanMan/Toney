@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createInitialTone } from '../core';
 import { createLiveRequest, validateLiveResponse, type LiveConfiguration, type LiveRequest } from '../core/native/live';
 import { NativeError } from '../core/native/protocol';
-import { createLiveQueue, LiveInputPanel } from '../apps/desktop/src/native/LiveInputPanel';
+import { createLiveQueue, LiveInputPanel, readLiveSettings } from '../apps/desktop/src/native/LiveInputPanel';
 import { liveRequest } from '../apps/desktop/src/native/bridge';
 
 const transport = vi.hoisted(() => ({ desktop: false, invoke: vi.fn() }));
@@ -24,6 +24,17 @@ function envelope(request: LiveRequest, running = true) {
 }
 
 describe('live input contract and controls', () => {
+  it('restores only bounded audio configuration and never restores an open stream', () => {
+    const stored = vi.fn(() => JSON.stringify({ ...settings, state: 'running', assets: [{ path: '/secret' }] }));
+    vi.stubGlobal('localStorage', { getItem: stored });
+    try {
+      expect(readLiveSettings()).toEqual(settings);
+      stored.mockReturnValue(JSON.stringify({ ...settings, outputGainDb: 20 }));
+      expect(readLiveSettings()).toMatchObject({ inputDeviceId: '', outputDeviceId: '', outputGainDb: -12 });
+      stored.mockReturnValue('{invalid');
+      expect(readLiveSettings()).toMatchObject({ inputDeviceId: '', bufferSize: 128 });
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('validates configuration and strips arbitrary paths/assets at the frontend boundary', () => {
     const request = createLiveRequest('start', createInitialTone(), { ...settings, assets: [{ path: '/secret' }] } as LiveConfiguration);
     expect(request.live).toEqual(settings);
