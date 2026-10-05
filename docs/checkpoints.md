@@ -282,3 +282,21 @@ Checkpoint pause / listening acceptance:
 4. Gear library → Browse amps/pedals/cabinets opens the TONE3000 window. Sign in there once, select a supported capture, return and download a variant. Authentication completion and a real download through the updated window remain user acceptance checks.
 
 Mix controls currently cover serial stage wet/dry; parallel buses, stereo modulation expansion, audio-reference analysis, DAW recording and tail-preserving live parameter automation are future work.
+
+## 011 — Exact saved rig bank and keyboard recall
+
+Implemented on 2026-10-04:
+
+- **Saved rigs** stores up to 64 named, validated snapshots, including exact NAM/IR content IDs, variants, creator/license metadata, stages, ordering, bypasses, parameters and wet/dry mixes. Existing weights stay in the private asset library. Explicit updates avoid modifying a saved rig while editing its working copy. Rename, replace, unique slot assignment and remove/undo controls are available in-app.
+- A persistent row of nine buttons recalls slots with mouse or keys **1–9**/numpad while Toney is focused. Typing, dropdowns, modifiers, held keys and composition cannot trigger a switch. Shared semantic commands accept UI/keyboard/future-hardware sources. MIDI/controller learning is future work.
+- Live recall refreshes actual helper state, validates local enabled references, and automatically submits the complete saved rig through the existing serialized Apply path. The UI changes only after acknowledgment. Rejected graph preparation preserves the current board/audio; missing models fail explicitly; transport faults can stop monitoring. Stop remains available and cancels a pending recall. Global interface settings are preserved; no stream starts during offline recall/reload.
+- Storage quota/errors preserve previous bank state; corrupt stored banks are surfaced without clearing data. Existing saved asset descriptors fill library discovery gaps during subsequent saves. Current selection and working tone persist. Each recall has a `rigswitch_*` trace plus native operation diagnostics.
+
+Verification:
+
+- **132 tests across 18 frontend files**, TypeScript, ESLint and production build pass. Eight bank tests cover exact snapshot/provenance round-trip, deep-copy isolation, explicit updates, unique slots, bounds/corruption and keyboard/hardware command resolution. Native Rust/DSP code is unchanged, so previous native gates were not repeated.
+- Full desktop fixture UI verifies two NAM rigs with different mixes, slot assignment, protected typing, key recall restoring exact stage mix, live automatic Apply without a second click, rejected native update preserving the old visible/playing revision and subsequent recall/reload persistence. No hardware or account was opened by that fixture.
+- Native updated app launches and preserves the user's current revision827 rig and ChatGPT connection. Saved that current exact CE-1/Marshall/Orange IR combo as **Marshall + CE-1**, assigned slot1 and verified native slot recall with input closed. Screenshot: `/private/tmp/toney-checkpoint-011-native.jpg`. No physical guitar switch/latency listening occurred in this checkpoint.
+- The macOS bundle rebuilt successfully (58.85 MiB); bundled executable matches the build and contains the final frontend. The 0.7.0 audio helper is unchanged, SHA-256 `27f5a5ee8c0dde979a8bdd6ea2b005eec8f458f18c56dac1fff7bdb56504ed7c`.
+
+Checkpoint pause: create a second sound, save it under another name, assign slot2, start live guitar and click/press **1/2** to compare. Keep Toney focused and leave text fields before pressing keys. Capture loading can delay a switch, and effect tails restart; a preloaded performance bank and measured hardware-controller timing are later components.

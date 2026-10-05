@@ -14,13 +14,13 @@ User intent → ToneIntent → deterministic tone compiler → ToneSpec → audi
 
 `ToneSpec` is the authoritative rig shared by the agent, controls, history, persistence, and audio processing. Manual edits become the input to subsequent agent requests.
 
-## Working checkpoint: integrated gear and direct playing workspace
+## Working checkpoint: saved rig bank and keyboard switching
 
 This repository begins with a small, runnable vertical slice, following the requested agent-first development order:
 
 - ChatGPT sign-in uses your eligible plan and discovered models to interpret descriptions into validated `ToneIntent`; explicit offline rules and local Ollama remain available.
 - A deterministic compiler creates or refines a validated `ToneSpec`.
-- A desktop workspace keeps live guitar controls visible, with separate Pedalboard, Gear library, Audition and History panes.
+- A desktop workspace keeps live guitar controls visible, with separate Pedalboard, Saved rigs, Gear library, Audition and History panes.
 - An offline browser audio preview makes the result audible using a synthetic plucked-string phrase or an imported clean DI file.
 - Local version history, preset export/import, and request traces support iteration and diagnosis.
 
@@ -36,6 +36,16 @@ The Tauri macOS desktop app packages the workbench with a JUCE helper for device
 6. Choose **Stop live guitar** to close input. Stop also remains available during agent requests and DSP preparation. Quitting closes the helper; recording audition is disabled during monitoring.
 
 Live NAM requires all enabled captures and the interface to use the same sample rate (usually 48 kHz). This slice supports up to five NAM nodes (for example four pedal captures plus one amp) and one cabinet IR, mono guitar duplicated to the first two hardware outputs. It does not record audio, host plugins or stream guitar to ChatGPT. Hardware playback, permission denial, unplug/replug and perceived latency still require the guitar/interface acceptance check in [checkpoints 009–010](docs/checkpoints.md).
+
+### Save rigs and switch while playing
+
+1. Set up the full pedalboard, then click **Save to rigs**, enter a name and choose **Save current as new rig**. The bank holds up to 64 named rigs and survives app restarts.
+2. Each snapshot keeps exact content hashes and names for every NAM/IR variant, stage ordering, enabled/bypassed state, parameters and stage mixes. Referenced creator/license metadata is retained. Model bytes remain in the existing local asset library; changing a pedalboard never changes the saved snapshot.
+3. Assign a **Keyboard slot** (1–9). Click its persistent slot button, **Play this rig**, or press its number key while Toney is focused. Number keys are ignored in text fields, dropdowns and during composition, with modifiers or when held/repeated.
+4. During live playing, recalling a saved rig automatically applies it. The previous graph plays while the replacement prepares; the existing 20 ms crossfade joins it. Missing enabled captures or rejected preparation preserve the selected/playing rig. A transport failure can stop monitoring and surfaces a traced error. There is no second Apply click for saved-rig recall.
+5. Edits show **edited**. Use **Update selected rig** or save another name to keep them before recalling a different rig. Rename, reassign, remove and undo removal from **Manage saved rig**. Reassigning a number clears its old owner. Device/rate/buffer and interface trims remain global.
+
+Switching uses shared semantic commands, so a future MIDI/footswitch adapter can call the same recall path. MIDI device discovery, controller learning and hardware testing are not implemented in this checkpoint. Keyboard-emulating hardware can use the number keys while Toney is focused. Capture loading is currently performed on recall; it is not a preloaded performance bank, and delay/reverb tails restart on a switch. Preset JSON import/export remains available for individual file copies; it does not package model weights or the entire bank.
 
 ### Direct headphone sound, mixes and gear browsing
 

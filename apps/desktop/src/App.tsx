@@ -139,7 +139,7 @@ export function App() {
 
   async function playSavedRig(id: string, source: RigSwitchCommand['source'] = 'ui') {
     if (locked || switchBusy.current) return;
-    switchBusy.current = true; setSwitching(true); setError('');
+    switchBusy.current = true; setSwitching(true); setError(''); setSaveStatus('');
     const requestId = `rigswitch_${crypto.randomUUID()}`, start = performance.now();
     try {
       const selected = recallRig(rigBank, id);
@@ -296,7 +296,7 @@ export function App() {
     try {
       if (file.size > 1_000_000) throw new Error('Preset exceeds the 1 MB limit.');
       const data: unknown = JSON.parse(await file.text());
-      keep(validateToneSpec(data));
+      keep(validateToneSpec(data)); setActiveRigId(undefined);
       setIntent(undefined);
       setMessage('Your preset is loaded. Manual settings are the starting point for the next refinement.');
     } catch (reason) { setError(`Preset import: ${reason instanceof Error ? reason.message : 'Invalid preset.'}`); }
