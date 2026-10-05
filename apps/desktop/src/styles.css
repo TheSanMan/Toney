@@ -75,3 +75,28 @@ html,body,#root{height:100%;overflow:hidden}
 @media(max-width:700px){html,body,#root{height:auto;overflow:auto}.desktop-shell{height:auto;min-height:100dvh;display:block}.desktop-shell .app-header{height:64px}.desktop-shell .session-title{display:none}.desktop-shell .workspace{display:block}.desktop-shell .engineer-panel{max-height:45vh}.desktop-shell .rig-panel{min-height:500px;display:grid;grid-template-rows:44px minmax(0,1fr) auto}.desktop-shell .workspace-content{max-height:65vh;padding:16px}.play-dock{max-height:none}.workspace-tabs{padding:0 5px}.workspace-tabs button{padding:0 10px}.workspace-tabs>span{display:none}.desktop-shell .live-settings{grid-template-columns:1fr 1fr}.desktop-shell .live-settings>label:last-child{grid-column:auto}.desktop-shell footer{height:38px;font-size:8px}.desktop-shell .error-banner{position:fixed;left:10px;right:10px;bottom:10px}.desktop-shell .diagnostics{position:fixed;left:10px;right:10px;top:10px;bottom:60px}.inspector-controls{gap:18px}.stage-inspector{padding:16px}.inspector-asset{flex-direction:column;align-items:stretch}}
 .audio-console{position:relative}.direct-tone{position:absolute;right:95px;top:13px;font-size:10px;padding:7px 10px;background:#23352a}.desktop-shell .play-dock .native-heading{padding-right:245px}@media(max-width:1100px){.direct-tone{position:static;float:right;margin-bottom:8px}.desktop-shell .play-dock .native-heading{padding-right:0}}
 .desktop-shell .inspector-controls{grid-template-columns:repeat(4,minmax(0,1fr));margin:20px 0 16px;gap:16px 22px}.desktop-shell .stage-inspector{padding:18px}.capture-neutral{font-size:10px;padding:7px 10px;margin-top:10px}@media(max-width:1100px){.desktop-shell .inspector-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* The rig switch row stays available while browsing and playing. */
+.rig-switch-strip { display:flex; align-items:center; gap:6px; padding:10px 20px; border-bottom:1px solid #364040; overflow-x:auto; flex-shrink:0; }
+.rig-switch-strip > span { font-size:10px; letter-spacing:1px; white-space:nowrap; color:#a3afa8; }
+.rig-switch-strip button { display:flex; align-items:center; gap:7px; min-width:72px; max-width:140px; padding:8px; font-size:11px; flex:1; }
+.rig-switch-strip button > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rig-switch-strip button[aria-pressed=true] { border-color:#e9bb7c; color:#e9bb7c; }
+.rig-switch-strip kbd { font:inherit; font-weight:700; padding:2px 5px; border:1px solid currentColor; border-radius:4px; }
+.rig-switch-strip .manage-rigs { flex:0; min-width:auto; }
+.rig-bank-panel { padding:8px 0 20px; }
+.rig-bank-panel h2 { margin:10px 0; }
+.rig-bank-panel > p { color:#a3afa8; font-size:13px; line-height:1.6; }
+.save-rig-form, .saved-rig-actions { display:flex; align-items:end; flex-wrap:wrap; gap:10px; margin:18px 0; }
+.save-rig-form label { flex:1; min-width:160px; }
+.save-rig-form input, .saved-rig-actions input, .saved-rig-actions select { display:block; margin-top:6px; padding:8px 10px; width:100%; }
+.saved-rigs { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
+.saved-rig { border:1px solid #364040; background:#151e1c; border-radius:12px; padding:18px; min-width:0; }
+.saved-rig.selected { border-color:#e9bb7c; }
+.saved-rig-title { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.saved-rig small, .saved-rig p, .saved-rig summary { color:#a3afa8; font-size:12px; }
+.saved-rig p { overflow-wrap:anywhere; line-height:1.6; }
+.saved-rig-actions button { font-size:12px; padding:9px 11px; }
+.saved-rig-actions label { font-size:12px; }
+
+.desktop-shell .rig-panel{grid-template-rows:44px auto minmax(0,1fr) auto}

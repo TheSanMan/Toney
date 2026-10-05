@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type Ref } from 'react';
 import type { ToneSpec } from '../../../../core';
 import { NativeError, type DeviceInventory, type EngineInfo, type RigValidation } from '../../../../core/native/protocol';
 import { isDesktop, nativeRequest } from './bridge';
-import { LiveInputPanel } from './LiveInputPanel';
+import { LiveInputPanel, type LiveRigHandle } from './LiveInputPanel';
 
 export interface NativeDiagnostic {
   operation: string;
@@ -12,10 +12,10 @@ export interface NativeDiagnostic {
   error?: { code: string; message: string };
 }
 
-export function AudioDevicesPanel({ tone, locked, onDiagnostic, onMonitoringChange, onDirect }: {
+export function AudioDevicesPanel({ tone, locked, onDiagnostic, onMonitoringChange, onDirect, rigSwitchRef }: {
   tone: ToneSpec; locked: boolean; onDiagnostic: (diagnostic: NativeDiagnostic) => void;
   onMonitoringChange: (active: boolean) => void;
-  onDirect?: () => void;
+  onDirect?: () => void; rigSwitchRef?: Ref<LiveRigHandle>;
 }) {
   const desktop = isDesktop();
   const [info, setInfo] = useState<EngineInfo>();
@@ -65,7 +65,7 @@ export function AudioDevicesPanel({ tone, locked, onDiagnostic, onMonitoringChan
   const currentValidated = validation?.toneId === tone.id && validation.revision === tone.revision;
   return <section className="native-panel audio-console">
     {onDirect && <button className="direct-tone" disabled={locked} onClick={onDirect}>Dry / direct · no room</button>}
-    <LiveInputPanel tone={tone} inventory={inventory} locked={locked} onDiagnostic={onDiagnostic} onMonitoringChange={onMonitoringChange} />
+    <LiveInputPanel rigSwitchRef={rigSwitchRef} tone={tone} inventory={inventory} locked={locked} onDiagnostic={onDiagnostic} onMonitoringChange={onMonitoringChange} />
     {desktop && <details className="audio-diagnostics"><summary>Device tools · {info ? 'engine ready' : working ? 'scanning' : 'check connection'}</summary>
       <div className="native-actions"><button disabled={locked || working} onClick={() => void refresh()}>Refresh devices</button>
         <button disabled={locked || working} onClick={() => void validate()}>Validate current rig</button>

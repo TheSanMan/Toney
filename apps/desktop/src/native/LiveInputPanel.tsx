@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import type { ToneSpec } from '../../../../core';
 import type { DeviceInventory } from '../../../../core/native/protocol';
 import { NativeError } from '../../../../core/native/protocol';
@@ -37,8 +37,12 @@ export function readLiveSettings(): LiveConfiguration {
   } catch { return { ...DEFAULT_SETTINGS }; }
 }
 
-export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonitoringChange }: {
-  tone: ToneSpec; inventory?: DeviceInventory; locked: boolean;
+export interface LiveRigHandle {
+  recall: (tone: ToneSpec) => Promise<'offline' | 'applied'>;
+}
+
+export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonitoringChange, rigSwitchRef }: {
+  tone: ToneSpec; inventory?: DeviceInventory; locked: boolean; rigSwitchRef?: Ref<LiveRigHandle>;
   onDiagnostic: (diagnostic: NativeDiagnostic) => void; onMonitoringChange: (active: boolean) => void;
 }) {
   const desktop = isDesktop();
@@ -110,7 +114,7 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
     };
   }, []);
 
-  async function control(operation: Exclude<LiveOperation, 'status'>) {
+  async function control(operation: Exclude<LiveOperation, 'status'>, recalledTone?: ToneSpec) {
     const epoch = operation === 'stop' ? ++generation.current : generation.current;
     if (operation === 'stop') setStopping(true);
     else setWorking(true);
@@ -119,7 +123,7 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
     if (operation === 'stop') starting.current = false;
     const start = performance.now();
     try {
-      const request = () => liveRequest(operation, operation === 'stop' ? undefined : tone,
+      const request = () => liveRequest(operation, operation === 'stop' ? undefined : recalledTone ?? tone,
         operation === 'stop' ? undefined : operation === 'start' ? settings
           : { inputGainDb: settings.inputGainDb, outputGainDb: settings.outputGainDb });
       // Stop bypasses the UI queue and Rust kills the helper before waiting on IPC.
@@ -134,6 +138,7 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
       accept(response.result, response.requestId, Math.round(performance.now() - start));
       callbacks.current.onDiagnostic({ operation: `live-${operation}`, requestId: response.requestId,
         durationMs: Math.round(performance.now() - start), result: response.result });
+      return true;
     } catch (reason) {
       if (!mounted.current || epoch !== generation.current) return;
       const failure = reason instanceof NativeError ? reason : new NativeError('LIVE_COMMAND_FAILED', String(reason), 'unavailable');
@@ -141,10 +146,31 @@ export function LiveInputPanel({ tone, inventory, locked, onDiagnostic, onMonito
       callbacks.current.onDiagnostic({ operation: `live-${operation}`, requestId: failure.requestId,
         durationMs: Math.round(performance.now() - start), error: { code: failure.code, message: failure.message } });
       if (operation === 'start') { starting.current = false; callbacks.current.onMonitoringChange(false); }
+      if (recalledTone) throw failure;
     } finally {
       if (mounted.current && epoch === generation.current) { if (operation === 'stop') setStopping(false); else setWorking(false); }
     }
   }
+
+  // Every input adapter recalls through this handle. A native graph acknowledgment
+  // must arrive before the parent changes the visible rig; failed Apply keeps it.
+  useImperativeHandle(rigSwitchRef, () => ({ recall: async (next) => {
+    if (working || stopping || starting.current) throw new Error('Wait for the current audio operation before switching rigs.');
+    if (!desktop) return 'offline';
+    const epoch = generation.current;
+    setWorking(true);
+    try {
+      // Recheck the helper: the first UI poll may not have completed, or the
+      // interface may have stopped since the last poll. Never guess "offline".
+      const start = performance.now();
+      const response = await queue.current(() => liveRequest('status'));
+      if (!mounted.current || epoch !== generation.current) throw new Error('Rig switch cancelled.');
+      accept(response.result, response.requestId, Math.round(performance.now() - start));
+      if (response.result.state !== 'running') return 'offline';
+      if (await control('update', next) !== true) throw new Error('Rig switch cancelled. The selected rig was not changed.');
+      return 'applied';
+    } finally { if (mounted.current && epoch === generation.current) setWorking(false); }
+  } }));
 
   const set = <K extends keyof LiveConfiguration>(key: K, value: LiveConfiguration[K]) => setSettings((previous) => ({ ...previous, [key]: value }));
   const frozen = working || stopping || running;

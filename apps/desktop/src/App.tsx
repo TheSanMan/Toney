@@ -5,6 +5,11 @@ import {
   type AgentTrace, type ToneIntent, type ToneSpec, type GearRecommendation,
 } from '../../../core';
 import { RigBoard } from './RigBoard';
+import { RigBankPanel } from './RigBankPanel';
+import { assignRigSlot, createRigBank, deleteRig, overwriteRig, readRigBank, recallRig, renameRig,
+  resolveRigSwitchCommand, rigSwitchCommandFromKeyboard, RIG_BANK_STORAGE_KEY, saveRigAs, serializeRigBank,
+  type RigBank, type RigSwitchCommand } from '../../../core/tone/rig-bank';
+import type { LiveRigHandle } from './native/LiveInputPanel';
 import { appendToneNode, cloneTone, revised } from '../../../core/tone/operations';
 import type { NativeAssetDescriptor } from '../../../core/native/assets';
 import type { Tone3000Target } from '../../../core/native/tone3000';
@@ -26,6 +31,11 @@ const EXAMPLES = [
   'Dreamy ambient clean, wide and spacious',
   'Saturated singing lead with good sustain',
 ];
+
+function readSavedRigs(): { bank: RigBank; error?: string } {
+  try { return { bank: readRigBank(localStorage.getItem(RIG_BANK_STORAGE_KEY)) }; }
+  catch (reason) { return { bank: createRigBank(), error: reason instanceof Error ? reason.message : 'Saved rigs could not be read.' }; }
+}
 
 function readHistory(): ToneSpec[] {
   try {
@@ -55,7 +65,18 @@ async function download(name: string, value: Blob) {
 }
 
 export function App() {
-  const [view, setView] = useState<'board' | 'gear' | 'audition' | 'history'>('board');
+  const [view, setView] = useState<'board' | 'rigs' | 'gear' | 'audition' | 'history'>('board');
+  const [bankLoad] = useState(readSavedRigs);
+  const [rigBank, setRigBank] = useState(bankLoad.bank);
+  const [activeRigId, setActiveRigId] = useState<string | undefined>(() => {
+    try { const id = localStorage.getItem('toney.current-rig-id.v1'); return id && bankLoad.bank.rigs.some((entry) => entry.id === id) ? id : undefined; }
+    catch { return undefined; }
+  });
+  const [switching, setSwitching] = useState(false);
+  const [undoBank, setUndoBank] = useState<RigBank>();
+  const switchBusy = useRef(false);
+  const liveRig = useRef<LiveRigHandle>(null);
+  const keyboardRecall = useRef<(command: RigSwitchCommand) => void>(() => undefined);
   const [assets, setAssets] = useState<NativeAssetDescriptor[]>([]);
   const [recommendations, setRecommendations] = useState<GearRecommendation[]>([]);
   const [browseRequest, setBrowseRequest] = useState<{ target: Tone3000Target; query: string; id: string }>();
@@ -88,8 +109,67 @@ export function App() {
   const audio = useRef<HTMLAudioElement>(null);
   const presetInput = useRef<HTMLInputElement>(null);
   const diInput = useRef<HTMLInputElement>(null);
-  const locked = busy || rendering;
+  const locked = busy || rendering || switching;
+  const activeRig = rigBank.rigs.find((entry) => entry.id === activeRigId);
+  const snapshotAssets = [...new Map([...rigBank.rigs.flatMap((entry) => entry.assets), ...assets].map((entry) => [entry.asset.id, entry])).values()];
+  const rigDirty = !!activeRig && JSON.stringify(activeRig.tone.chain) !== JSON.stringify(tone.chain);
   const desktop = isDesktop();
+
+  function persistBank(next: RigBank): boolean {
+    try {
+      if (bankLoad.error) throw new Error(bankLoad.error);
+      // Store first: quota or permission failure never replaces the in-memory bank.
+      localStorage.setItem(RIG_BANK_STORAGE_KEY, serializeRigBank(next));
+      setRigBank(next); setUndoBank(undefined); setSaveStatus('Saved rigs updated on this device.');
+      return true;
+    } catch (reason) { setError(`Rig bank: ${reason instanceof Error ? reason.message : String(reason)}`); return false; }
+  }
+
+  function editBank(operation: () => RigBank): boolean {
+    try { return persistBank(operation()); }
+    catch (reason) { setError(`Rig bank: ${reason instanceof Error ? reason.message : String(reason)}`); return false; }
+  }
+
+  function saveNamedRig(name: string) {
+    const id = `rig_${crypto.randomUUID()}`;
+    if (editBank(() => saveRigAs(rigBank, { name, tone, assets: snapshotAssets, id }))) {
+      setActiveRigId(id); setSaveStatus(`“${name.trim()}” saved with its exact capture combo.`);
+    }
+  }
+
+  async function playSavedRig(id: string, source: RigSwitchCommand['source'] = 'ui') {
+    if (locked || switchBusy.current) return;
+    switchBusy.current = true; setSwitching(true); setError('');
+    const requestId = `rigswitch_${crypto.randomUUID()}`, start = performance.now();
+    try {
+      const selected = recallRig(rigBank, id);
+      const missing = desktop ? collectToneAssets(selected.tone).filter((asset) => !assets.some((item) => item.asset.id === asset.id && item.asset.kind === asset.kind)) : [];
+      if (missing.length) throw new Error(`Missing local captures: ${missing.map((asset) => asset.name).join(', ')}. Restore these exact files in Gear library before playing this rig.`);
+      if (!liveRig.current) throw new Error('Audio controls are not ready. Try the rig again shortly.');
+      const outcome = await liveRig.current.recall(selected.tone);
+      setTone(selected.tone); setActiveRigId(id); setIntent(undefined); setRecommendations([]); setWarnings([]); setExplanation('');
+      setMessage(`“${selected.name}” ${outcome === 'applied' ? 'is playing now.' : 'loaded. Press Start live guitar when you’re ready.'}`);
+      setNativeDiagnostics((items) => [...items, { operation: 'rig-recall', requestId, durationMs: Math.round(performance.now() - start), result: { rigId: id, slot: selected.slot, source, outcome } }].slice(-20));
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(`Rig switch failed: ${message} · ${requestId}`);
+      setNativeDiagnostics((items) => [...items, { operation: 'rig-recall', requestId, durationMs: Math.round(performance.now() - start), error: { code: 'RIG_RECALL_FAILED', message } }].slice(-20));
+    } finally { switchBusy.current = false; setSwitching(false); }
+  }
+
+  function dispatchRigSwitch(command: RigSwitchCommand) {
+    const saved = resolveRigSwitchCommand(rigBank, command);
+    if (saved) void playSavedRig(saved.id, command.source);
+  }
+  keyboardRecall.current = dispatchRigSwitch;
+  useEffect(() => {
+    const recall = (event: KeyboardEvent) => {
+      const command = rigSwitchCommandFromKeyboard(event);
+      if (command) keyboardRecall.current(command);
+    };
+    window.addEventListener('keydown', recall);
+    return () => window.removeEventListener('keydown', recall);
+  }, []);
 
   async function saveFile(name: string, value: Blob) {
     setError(''); setSaveStatus('');
@@ -110,6 +190,13 @@ export function App() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(history)); }
     catch { setError('Local history could not be saved. Export your preset to keep a copy.'); }
   }, [history]);
+
+  useEffect(() => {
+    try {
+      if (activeRigId) localStorage.setItem('toney.current-rig-id.v1', activeRigId);
+      else localStorage.removeItem('toney.current-rig-id.v1');
+    } catch { setError('The selected rig label could not be saved. Your saved rig bank is unchanged.'); }
+  }, [activeRigId]);
 
   useEffect(() => {
     try { localStorage.setItem(CURRENT_TONE_KEY, JSON.stringify(tone)); }
@@ -263,9 +350,9 @@ export function App() {
   return <div className="app-shell desktop-shell">
     <header className="app-header">
       <a className="wordmark" href="#">toney<span>●</span></a>
-      <span className="session-title">{tone.name}<small>Revision {tone.revision} · saved on this device</small></span>
-      <div className="rig-actions"><button disabled={locked} onClick={() => {
-        setTone(createInitialTone()); setIntent(undefined); setRecommendations([]); setWarnings([]); setExplanation('');
+      <span className="session-title">{activeRig?.name ?? tone.name}{rigDirty ? ' · edited' : ''}<small>Revision {tone.revision} · saved on this device</small></span>
+      <div className="rig-actions"><button disabled={locked} onClick={() => setView('rigs')}>Save to rigs</button><button disabled={locked} onClick={() => {
+        setTone(createInitialTone()); setActiveRigId(undefined); setIntent(undefined); setRecommendations([]); setWarnings([]); setExplanation('');
         setMessage('A fresh starting rig. Describe the sound you want to build.');
       }}>New rig</button><button disabled={locked} onClick={() => presetInput.current?.click()}>Open preset</button>
         <button disabled={locked} onClick={() => saveJSON('toney-preset.json', tone)}>Save preset</button></div>
@@ -312,9 +399,22 @@ export function App() {
         </details>
       </aside>
       <section className="rig-panel">
-        <nav className="workspace-tabs" aria-label="Workspace">{(['board', 'gear', 'audition', 'history'] as const).map((tab) => <button key={tab} aria-pressed={view === tab} onClick={() => setView(tab)}>{({board:'Pedalboard',gear:'Gear library',audition:'Audition',history:'History'})[tab]}</button>)}<span>{tone.chain.filter((node) => node.enabled).length} stages on</span></nav>
+        <nav className="workspace-tabs" aria-label="Workspace">{(['board', 'rigs', 'gear', 'audition', 'history'] as const).map((tab) => <button key={tab} aria-pressed={view === tab} onClick={() => setView(tab)}>{({board:'Pedalboard',rigs:'Saved rigs',gear:'Gear library',audition:'Audition',history:'History'})[tab]}</button>)}<span>{tone.chain.filter((node) => node.enabled).length} stages on</span></nav>
+        <div className="rig-switch-strip" aria-label="Rig switch slots"><span>{switching ? 'Switching…' : 'RIG SLOTS'}</span>
+          {Array.from({ length: 9 }, (_, index) => { const slot = index + 1, saved = rigBank.rigs.find((entry) => entry.slot === slot); return <button key={slot} disabled={locked || !saved} aria-label={`Rig slot ${slot}${saved ? `: ${saved.name}` : ': unassigned'}`} aria-pressed={!!saved && activeRigId === saved.id && !rigDirty}
+            title={saved ? `Press ${slot} to play ${saved.name}` : `Assign a rig to key ${slot} in Saved rigs`} onClick={() => dispatchRigSwitch({ type: 'recall-slot', slot, source: 'ui' })}><kbd>{slot}</kbd><span>{saved?.name ?? '—'}</span></button>; })}
+          <button className="manage-rigs" onClick={() => setView('rigs')}>Manage</button>
+        </div>
         {saveStatus && <p className="save-status" role="status">{saveStatus}</p>}
         <div className="workspace-content">
+          <div hidden={view !== 'rigs'}><RigBankPanel bank={rigBank} activeId={activeRigId} dirty={rigDirty} locked={locked} storageError={bankLoad.error}
+            onSave={saveNamedRig} onRecall={(id) => void playSavedRig(id)}
+            onOverwrite={(id) => { if (editBank(() => overwriteRig(rigBank, id, { tone, assets: snapshotAssets }))) setActiveRigId(id); }}
+            onRename={(id, name) => { editBank(() => renameRig(rigBank, id, name)); }}
+            onAssign={(id, slot) => { editBank(() => assignRigSlot(rigBank, id, slot)); }}
+            onRemove={(id) => { const previous = rigBank; if (editBank(() => deleteRig(rigBank, id))) { setUndoBank(previous); if (activeRigId === id) setActiveRigId(undefined); } }} />
+            {undoBank && <button disabled={locked} onClick={() => persistBank(undoBank)}>Undo rig removal</button>}
+          </div>
           <div hidden={view !== 'board'}><RigBoard tone={tone} assets={assets} locked={locked} onChange={setTone} onBrowse={() => setView('gear')} /></div>
           <div hidden={view !== 'gear'}><AssetLibraryPanel tone={tone} locked={locked} browseRequest={browseRequest} onAssets={setAssets}
             onSelect={(nodeId, asset) => setTone((current) => setToneAsset(current, nodeId, asset))}
@@ -347,7 +447,7 @@ export function App() {
         </section>
           </div>
         </div>
-        <div className="play-dock"><AudioDevicesPanel tone={tone} locked={locked} onDirect={makeDirect} onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))}
+        <div className="play-dock"><AudioDevicesPanel rigSwitchRef={liveRig} tone={tone} locked={locked} onDirect={makeDirect} onDiagnostic={(diagnostic) => setNativeDiagnostics((items) => [...items, diagnostic].slice(-20))}
           onMonitoringChange={(active) => { if (active) audio.current?.pause(); setLiveMonitoring(active); }} /></div>
       </section>
     </main>
